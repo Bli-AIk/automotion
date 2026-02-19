@@ -7,7 +7,7 @@ pub const PACKAGE_NAME: &str = "com.taffy.alemon"; // 实测实际包名
 
 /// 手机端路径
 pub const PHONE_DOWNLOAD_DIR: &str = "/sdcard/Download";
-pub const PHONE_VIDEO_DIR: &str = "/sdcard/Movies/Alight Motion"; // ← 根据实际情况修改
+pub const PHONE_VIDEO_DIR: &str = "/sdcard/Movies/Alemon"; // 实测确认路径
 pub const PHONE_UI_DUMP: &str = "/sdcard/window_dump.xml";
 
 /// 本地路径

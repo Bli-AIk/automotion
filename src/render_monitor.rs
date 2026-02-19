@@ -8,13 +8,15 @@ use crate::logger;
 use crate::ui;
 
 /// 监控渲染进度，返回完成后的视频文件手机端路径
-pub fn wait_for_render_complete() -> Result<String, String> {
+/// `proj_title` 是 amproj 内部的工程标题，用于匹配输出文件名
+/// Alemon 输出的视频文件命名格式: "{标题} [{哈希}].mp4"
+pub fn wait_for_render_complete(proj_title: &str) -> Result<String, String> {
     logger::step("开始监控渲染状态");
 
     let mut elapsed: u64 = 0;
 
-    // 阶段 1: 等待视频文件开始出现
-    logger::info("等待视频文件生成...");
+    // 阶段 1: 等待匹配的视频文件出现
+    logger::info(&format!("等待视频文件生成（匹配标题: \"{proj_title}\"）..."));
     let video_file = loop {
         if elapsed >= config::MAX_RENDER_WAIT_SECS {
             return Err(format!(
@@ -23,13 +25,29 @@ pub fn wait_for_render_complete() -> Result<String, String> {
             ));
         }
 
+        // 列出目录中所有 mp4 文件，按时间倒序，找匹配标题的最新文件
         if let Ok(output) = adb::shell_cmd(&format!(
-            "ls -t '{}'/*.mp4 2>/dev/null | head -1",
+            "ls -t '{}'/*.mp4 2>/dev/null",
             config::PHONE_VIDEO_DIR
         )) {
-            let file = output.trim().to_string();
-            if !file.is_empty() && !file.contains("No such file") {
-                logger::info(&format!("检测到视频文件: {file}"));
+            for line in output.lines() {
+                let filename = line.trim();
+                if !filename.is_empty()
+                    && !filename.contains("No such file")
+                    && filename.contains(proj_title)
+                {
+                    logger::info(&format!("检测到匹配视频文件: {filename}"));
+                    break; // 外层 loop 需要值
+                }
+            }
+            // 重新查找返回值
+            let found = output.lines().find(|l| {
+                let f = l.trim();
+                !f.is_empty() && !f.contains("No such file") && f.contains(proj_title)
+            });
+            if let Some(f) = found {
+                let file = f.trim().to_string();
+                logger::info(&format!("检测到匹配视频文件: {file}"));
                 break file;
             }
         }
@@ -39,7 +57,9 @@ pub fn wait_for_render_complete() -> Result<String, String> {
 
         std::thread::sleep(std::time::Duration::from_secs(config::POLL_INTERVAL_SECS));
         elapsed += config::POLL_INTERVAL_SECS;
-        logger::info(&format!("  已等待 {elapsed}s，视频文件尚未生成..."));
+        if elapsed % 15 == 0 {
+            logger::info(&format!("  已等待 {elapsed}s，视频文件尚未生成..."));
+        }
     };
 
     // 阶段 2: 轮询文件大小直到稳定
