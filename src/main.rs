@@ -292,12 +292,20 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
     adb::open_project_via_content(&media_id)?;
     delay();
 
-    // 阶段 3: 在导入确认对话框中点击"导入"
+    // 阶段 3: 在导入确认对话框中点击"导入"（带重试）
     logger::step("[3/9] 确认导入对话框");
     if !ui::wait_and_tap_text("导入", timeout) {
+        // 首次失败，可能 Alemon 冷启动慢，重新发送 intent
+        logger::warn("导入对话框未出现，重试中...");
         adb::force_stop();
-        adb::cleanup_phone(&proj_filename, None);
-        return Err("无法找到导入确认按钮".into());
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        adb::open_project_via_content(&media_id)?;
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        if !ui::wait_and_tap_text("导入", 15) {
+            adb::force_stop();
+            adb::cleanup_phone(&proj_filename, None);
+            return Err("无法找到导入确认按钮".into());
+        }
     }
     delay();
 
