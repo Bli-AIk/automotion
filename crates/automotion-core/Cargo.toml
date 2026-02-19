@@ -3,8 +3,12 @@ name = "automotion-core"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib", "lib"]
+
 [dependencies]
 regex = "1"
 chrono = "0.4"
 zip = "2"
 roxmltree = "0.20"
+uniffi = "0.29"
