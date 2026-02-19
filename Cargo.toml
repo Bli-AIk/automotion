@@ -8,3 +8,5 @@ regex = "1"
 ctrlc = "3"
 chrono = "0.4"
 zip = "2"
+clap = { version = "4", features = ["derive"] }
+roxmltree = "0.20"
