@@ -1,9 +1,5 @@
 mod adb;
-mod amproj;
-mod config;
-mod logger;
 mod render_monitor;
-mod split;
 mod ui;
 
 use std::fs;
@@ -12,6 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+
+use automotion_core::{amproj, config, logger, split};
 
 #[derive(Parser)]
 #[command(name = "automotion", about = "Alemon 批量渲染自动化工具")]

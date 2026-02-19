@@ -2,10 +2,9 @@
 // 渲染监控模块 — 轮询文件大小，严禁死等
 // =============================================================================
 
+use automotion_core::{config, logger};
+
 use crate::adb;
-use crate::config;
-use crate::logger;
-use crate::ui;
 
 /// 监控渲染进度，返回完成后的视频文件手机端路径
 /// `proj_title` 是 amproj 内部的工程标题，用于匹配输出文件名
