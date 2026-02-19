@@ -52,9 +52,7 @@ pub fn wait_for_render_complete(proj_title: &str) -> Result<String, String> {
             }
         }
 
-        // 渲染等待期间也检查弹窗
-        ui::dismiss_popups();
-
+        // 等待视频文件出现
         std::thread::sleep(std::time::Duration::from_secs(config::POLL_INTERVAL_SECS));
         elapsed += config::POLL_INTERVAL_SECS;
         if elapsed % 15 == 0 {

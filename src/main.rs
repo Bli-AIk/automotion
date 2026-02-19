@@ -265,6 +265,9 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
         .to_string_lossy()
         .to_string();
 
+    let delay = || std::thread::sleep(std::time::Duration::from_millis(config::UI_STEP_DELAY_MS));
+    let timeout = config::UI_WAIT_TIMEOUT_SECS;
+
     logger::step("==========================================");
     logger::step(&format!("开始处理工程: {proj_filename}"));
     logger::step("==========================================");
@@ -284,32 +287,32 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
 
     // 阶段 2: 查询 MediaStore ID 并通过 content:// URI 触发导入
     logger::step("[2/9] 通过 content:// URI 触发导入");
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    std::thread::sleep(std::time::Duration::from_secs(2)); // MediaStore 索引需要时间
     let media_id = adb::query_media_id(&proj_filename)?;
     adb::open_project_via_content(&media_id)?;
-    std::thread::sleep(std::time::Duration::from_secs(config::UI_LOAD_WAIT));
+    delay();
 
     // 阶段 3: 在导入确认对话框中点击"导入"
     logger::step("[3/9] 确认导入对话框");
-    if !ui::wait_and_tap_text("导入", config::UI_RETRY_COUNT) {
+    if !ui::wait_and_tap_text("导入", timeout) {
         adb::force_stop();
         adb::cleanup_phone(&proj_filename, None);
         return Err("无法找到导入确认按钮".into());
     }
-    std::thread::sleep(std::time::Duration::from_secs(config::UI_LOAD_WAIT));
+    delay();
 
     // 阶段 4: 在导入完成对话框中点击"完成"
     logger::step("[4/9] 等待导入完成");
-    if !ui::wait_and_tap_text("完成", config::UI_RETRY_COUNT) {
+    if !ui::wait_and_tap_text("完成", timeout) {
         logger::warn("未找到完成按钮，尝试关闭弹窗...");
         ui::dismiss_popups();
     }
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    delay();
 
     // 阶段 5: 启动 Alemon 并根据类型导航到对应标签页
     logger::step("[5/9] 打开 Alemon 并导航到对应标签页");
     adb::launch_app()?;
-    std::thread::sleep(std::time::Duration::from_secs(config::UI_LOAD_WAIT));
+    delay();
 
     let (tab_id, tab_text) = match proj_type {
         amproj::AmprojType::Project => ("tab_button_projects", "项目"),
@@ -317,51 +320,132 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
     };
     logger::info(&format!("导航到「{tab_text}」标签"));
 
-    if !ui::wait_and_tap_by_resource_id(tab_id, config::UI_RETRY_COUNT) {
-        if !ui::wait_and_tap_text(tab_text, config::UI_RETRY_COUNT) {
+    if !ui::wait_and_tap_by_resource_id(tab_id, timeout) {
+        if !ui::wait_and_tap_text(tab_text, timeout) {
             adb::force_stop();
             adb::cleanup_phone(&proj_filename, None);
             return Err(format!("无法导航到{tab_text}标签页"));
         }
     }
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    delay();
 
     // 阶段 6: 在列表中找到刚导入的工程并打开
     logger::step("[6/9] 打开导入的工程");
-    if !ui::wait_and_tap_text(&proj_title, config::UI_RETRY_COUNT) {
+    if !ui::wait_and_tap_text(&proj_title, timeout) {
         adb::force_stop();
         adb::cleanup_phone(&proj_filename, None);
         return Err(format!("在列表中未找到工程: {proj_title}"));
     }
-    std::thread::sleep(std::time::Duration::from_secs(config::UI_LOAD_WAIT));
+    delay();
 
-    // 阶段 7: 点击导出菜单并选择视频导出
-    logger::step("[7/9] 打开导出菜单并选择视频");
+    // 编辑器加载后可能连续出现多个弹窗（"原件丢失"、"缺失字体"等）
+    // 同时等待 share 按钮出现，在等待过程中持续处理弹窗
+    // 阶段 7: 点击导出菜单并开始渲染
+    logger::step("[7/9] 打开导出菜单并开始渲染");
 
-    if !ui::wait_and_tap_by_resource_id("share", config::UI_RETRY_COUNT) {
-        adb::force_stop();
-        adb::cleanup_phone(&proj_filename, None);
-        return Err("无法找到分享/导出按钮".into());
-    }
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    {
+        let share_timeout = 30u64; // 大项目编辑器加载+弹窗处理可能需要较长时间
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs(share_timeout);
+        let mut found_share = false;
 
-    if !ui::wait_and_tap_text("视频", config::UI_RETRY_COUNT) {
-        adb::force_stop();
-        adb::cleanup_phone(&proj_filename, None);
-        return Err("无法找到视频导出选项".into());
-    }
-    std::thread::sleep(std::time::Duration::from_secs(3));
+        while std::time::Instant::now() < deadline {
+            // 先尝试处理弹窗
+            ui::dismiss_popups();
 
-    if !ui::wait_and_tap_by_resource_id("saveButton", config::UI_RETRY_COUNT) {
-        if !ui::wait_and_tap_text("保存", config::UI_RETRY_COUNT) {
+            // 然后检查 share 按钮
+            if let Ok(xml) = adb::dump_ui_xml() {
+                if let Some((cx, cy)) = ui::find_element_by_id(&xml, "share") {
+                    logger::info(&format!("找到 share 按钮: ({cx}, {cy})，执行点击"));
+                    let _ = adb::tap(cx, cy);
+                    found_share = true;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(config::UI_POLL_INTERVAL_MS));
+        }
+
+        if !found_share {
             adb::force_stop();
             adb::cleanup_phone(&proj_filename, None);
-            return Err("无法找到保存按钮".into());
+            return Err("无法找到分享/导出按钮".into());
         }
     }
+    delay();
 
-    // 阶段 8: 监控渲染完成
+    // 等待导出菜单加载（"视频"选项可见）
+    if !ui::wait_for_text_visible("视频", timeout) {
+        adb::force_stop();
+        adb::cleanup_phone(&proj_filename, None);
+        return Err("导出菜单未正确加载".into());
+    }
+
+    // 点击 exportButton 开始渲染视频
+    if !ui::wait_and_tap_by_resource_id("exportButton", timeout) {
+        adb::force_stop();
+        adb::cleanup_phone(&proj_filename, None);
+        return Err("无法找到导出按钮".into());
+    }
+
+    // 阶段 8: 等待渲染完成
+    // exportButton 点击后：
+    //   - 简单项目：瞬间渲染完成，直接进入预览页（含 saveButton）
+    //   - 复杂项目：编辑器上覆盖渲染进度层，渲染完成后才进入预览页
+    //   - 可能弹出"无法导出"警告，需点"仍要导出"继续
     logger::step("[8/9] 等待渲染完成");
+
+    let render_timeout = config::MAX_RENDER_WAIT_SECS;
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(render_timeout);
+    let mut last_log = std::time::Instant::now();
+    let mut found_save = false;
+
+    loop {
+        if std::time::Instant::now() >= deadline {
+            adb::force_stop();
+            adb::cleanup_phone(&proj_filename, None);
+            return Err(format!("渲染超时（{}s）", render_timeout));
+        }
+
+        // 处理可能的弹窗（"仍要导出"、"确定"等）
+        ui::dismiss_popups();
+
+        // 检测 saveButton（渲染完成标志）
+        if let Ok(xml) = adb::dump_ui_xml() {
+            if ui::find_element_by_id(&xml, "saveButton").is_some() {
+                logger::info("渲染完成，预览页已出现");
+                found_save = true;
+                break;
+            }
+
+            // 渲染期间输出进度日志
+            if last_log.elapsed() >= std::time::Duration::from_secs(15) {
+                // 尝试检测渲染进度文本
+                let elapsed = std::time::Instant::now()
+                    .duration_since(deadline - std::time::Duration::from_secs(render_timeout));
+                logger::info(&format!("  渲染中... 已等待 {}s", elapsed.as_secs()));
+                last_log = std::time::Instant::now();
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(config::UI_POLL_INTERVAL_MS));
+    }
+
+    if !found_save {
+        adb::force_stop();
+        adb::cleanup_phone(&proj_filename, None);
+        return Err("渲染完成后未找到保存按钮".into());
+    }
+
+    // 点击 saveButton 保存文件
+    if !ui::wait_and_tap_by_resource_id("saveButton", timeout) {
+        adb::force_stop();
+        adb::cleanup_phone(&proj_filename, None);
+        return Err("无法点击保存按钮".into());
+    }
+
+    // 等待文件写入完成
+    logger::step("[8/9] 等待文件保存完成");
     let video_remote_path = render_monitor::wait_for_render_complete(&proj_title)?;
 
     // 阶段 9: 拉取视频与清理

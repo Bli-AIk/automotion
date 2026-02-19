@@ -44,11 +44,13 @@ pub fn find_element_by_id(xml: &str, target_id: &str) -> Option<(i32, i32)> {
     parse_bounds_center(&caps[1])
 }
 
-/// 等待并点击指定文本的 UI 元素（带重试）
-pub fn wait_and_tap_text(target_text: &str, max_retries: u32) -> bool {
+/// 等待并点击指定文本的 UI 元素（基于超时的轮询）
+pub fn wait_and_tap_text(target_text: &str, timeout_secs: u64) -> bool {
     logger::info(&format!("等待 UI 元素出现: text=\"{target_text}\""));
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(timeout_secs);
 
-    for retry in 1..=max_retries {
+    loop {
         if let Ok(xml) = adb::dump_ui_xml() {
             if let Some((cx, cy)) = find_element_by_text(&xml, target_text) {
                 logger::info(&format!(
@@ -58,24 +60,27 @@ pub fn wait_and_tap_text(target_text: &str, max_retries: u32) -> bool {
                 return true;
             }
         }
-        logger::info(&format!(
-            "  第 {retry}/{max_retries} 次重试，等待 {}s...",
-            config::UI_LOAD_WAIT
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            config::UI_POLL_INTERVAL_MS,
         ));
-        std::thread::sleep(std::time::Duration::from_secs(config::UI_LOAD_WAIT));
     }
 
     logger::warn(&format!(
-        "UI 元素 [{target_text}] 在 {max_retries} 次尝试后未找到"
+        "UI 元素 [{target_text}] 在 {timeout_secs}s 内未找到"
     ));
     false
 }
 
-/// 等待并点击指定 resource-id 的 UI 元素（带重试）
-pub fn wait_and_tap_by_resource_id(target_id: &str, max_retries: u32) -> bool {
+/// 等待并点击指定 resource-id 的 UI 元素（基于超时的轮询）
+pub fn wait_and_tap_by_resource_id(target_id: &str, timeout_secs: u64) -> bool {
     logger::info(&format!("等待 UI 元素出现: id=\"{target_id}\""));
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(timeout_secs);
 
-    for retry in 1..=max_retries {
+    loop {
         if let Ok(xml) = adb::dump_ui_xml() {
             if let Some((cx, cy)) = find_element_by_id(&xml, target_id) {
                 logger::info(&format!(
@@ -85,17 +90,38 @@ pub fn wait_and_tap_by_resource_id(target_id: &str, max_retries: u32) -> bool {
                 return true;
             }
         }
-        logger::info(&format!(
-            "  第 {retry}/{max_retries} 次重试，等待 {}s...",
-            config::UI_LOAD_WAIT
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            config::UI_POLL_INTERVAL_MS,
         ));
-        std::thread::sleep(std::time::Duration::from_secs(config::UI_LOAD_WAIT));
     }
 
     logger::warn(&format!(
-        "UI 元素 [{target_id}] 在 {max_retries} 次尝试后未找到"
+        "UI 元素 [{target_id}] 在 {timeout_secs}s 内未找到"
     ));
     false
+}
+
+/// 等待指定文本在 UI 中可见（不点击）
+pub fn wait_for_text_visible(target_text: &str, timeout_secs: u64) -> bool {
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(timeout_secs);
+
+    loop {
+        if let Ok(xml) = adb::dump_ui_xml() {
+            if find_element_by_text(&xml, target_text).is_some() {
+                return true;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            config::UI_POLL_INTERVAL_MS,
+        ));
+    }
 }
 
 /// 尝试关闭可能出现的突发弹窗
