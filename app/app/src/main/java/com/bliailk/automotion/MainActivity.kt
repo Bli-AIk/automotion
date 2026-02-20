@@ -423,10 +423,10 @@ private fun performSplit(context: android.content.Context, uris: List<Uri>): Lis
     val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(
         android.os.Environment.DIRECTORY_DOWNLOADS
     )
-    val splitOutputDir = java.io.File(
-        context.getExternalFilesDir(null), "split_output"
-    )
+    // 拆分输出到 /sdcard/Download/automotion_split/
+    val splitOutputDir = java.io.File(downloadDir, "automotion_split")
     splitOutputDir.mkdirs()
+    AppLog.log("Split", "输出目录: ${splitOutputDir.absolutePath}")
 
     for (uri in uris) {
         val filename = getFilenameFromUri(context, uri) ?: continue
@@ -446,12 +446,20 @@ private fun performSplit(context: android.content.Context, uris: List<Uri>): Lis
                 }
             }
 
+            // 为每个文件创建子目录，避免多个文件的拆分结果混在一起
+            val baseName = filename.removeSuffix(".amproj")
+            val fileOutputDir = java.io.File(splitOutputDir, baseName)
+            fileOutputDir.mkdirs()
+
             // 调用 Rust 核心库拆分
             val outputPaths = uniffi.automotion_core.splitAmprojToDir(
                 tempFile.absolutePath,
-                splitOutputDir.absolutePath
+                fileOutputDir.absolutePath
             )
 
+            for (path in outputPaths) {
+                AppLog.log("Split", "  → ${java.io.File(path).name}")
+            }
             AppLog.log("Split", "✅ $filename → ${outputPaths.size} 个元素")
             allOutputs.addAll(outputPaths.map { java.io.File(it) })
         } catch (e: Exception) {
@@ -462,5 +470,6 @@ private fun performSplit(context: android.content.Context, uris: List<Uri>): Lis
     }
 
     AppLog.log("Split", "拆分完成，共 ${allOutputs.size} 个文件")
+    AppLog.log("Split", "📂 文件位置: ${splitOutputDir.absolutePath}")
     return allOutputs
 }
