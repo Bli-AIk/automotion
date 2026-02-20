@@ -1,6 +1,9 @@
 package com.bliailk.automotion
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -199,6 +202,11 @@ fun MainScreen() {
                 ) {
                     Text("📋 运行日志", style = MaterialTheme.typography.titleSmall)
                     Row {
+                        TextButton(onClick = {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            cm.setPrimaryClip(ClipData.newPlainText("automotion_log", AppLog.getAllText()))
+                            Toast.makeText(context, "日志已复制", Toast.LENGTH_SHORT).show()
+                        }) { Text("复制") }
                         TextButton(onClick = {
                             AppLog.clear()
                             logLines.clear()

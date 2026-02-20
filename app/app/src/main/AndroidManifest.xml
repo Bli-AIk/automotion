@@ -41,6 +41,17 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- FileProvider: 安全共享文件给 Alemon -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- 前台服务：渲染期间保持存活 -->
         <service
             android:name=".RenderForegroundService"

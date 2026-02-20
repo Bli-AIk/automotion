@@ -119,6 +119,41 @@ class AutomationService : AccessibilityService() {
     // ── 弹窗处理 ──────────────────────────────────────────────────────────
 
     /**
+     * 向下滚动当前列表
+     */
+    fun scrollDown(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        // 查找可滚动的节点
+        val scrollable = findScrollableNode(root)
+        if (scrollable != null) {
+            return scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        }
+        // 降级：使用手势滚动
+        val displayMetrics = resources.displayMetrics
+        val x = displayMetrics.widthPixels / 2f
+        val startY = displayMetrics.heightPixels * 0.7f
+        val endY = displayMetrics.heightPixels * 0.3f
+        val path = Path().apply {
+            moveTo(x, startY)
+            lineTo(x, endY)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 300))
+            .build()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    private fun findScrollableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.isScrollable) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val result = findScrollableNode(child)
+            if (result != null) return result
+        }
+        return null
+    }
+
+    /**
      * 尝试关闭弹窗，使用 Rust 核心库提供的弹窗关键词列表（通过 UniFFI）
      * 返回是否成功关闭了弹窗
      */
