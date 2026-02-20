@@ -117,14 +117,15 @@ class AutomationService : AccessibilityService() {
     // ── 弹窗处理 ──────────────────────────────────────────────────────────
 
     /**
-     * 尝试关闭弹窗，使用 Rust 核心库提供的弹窗关键词列表
+     * 尝试关闭弹窗，使用 Rust 核心库提供的弹窗关键词列表（通过 UniFFI）
      * 返回是否成功关闭了弹窗
      */
     fun dismissPopups(): Boolean {
-        // 从 Rust 核心库获取弹窗关键词列表（通过 UniFFI）
-        // val popupTexts = automotion_core.getPopupDismissTexts()
-        // TODO: 接入 UniFFI 生成的绑定后取消注释
-        val popupTexts = listOf("仍要导出", "跳过", "稍后", "不了", "跳过广告", "确定", "确认", "好")
+        val popupTexts = try {
+            uniffi.automotion_core.getPopupDismissTexts()
+        } catch (_: Exception) {
+            listOf("仍要导出", "跳过", "稍后", "不了", "跳过广告", "确定", "确认", "好")
+        }
 
         for (text in popupTexts) {
             val node = findNodeByText(text)

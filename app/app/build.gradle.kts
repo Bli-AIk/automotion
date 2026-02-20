@@ -54,6 +54,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.8")
     implementation("androidx.core:core-ktx:1.15.0")
 
+    // Kotlin 协程
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
+
     // UniFFI 生成的绑定需要 JNA
     implementation("net.java.dev.jna:jna:5.17.0@aar")
 }

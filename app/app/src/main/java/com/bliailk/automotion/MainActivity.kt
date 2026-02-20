@@ -1,11 +1,17 @@
 package com.bliailk.automotion
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,6 +22,18 @@ import androidx.compose.ui.unit.dp
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 请求文件管理权限（Android 11+）
+        if (!Environment.isExternalStorageManager()) {
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:$packageName")
+                })
+            }
+        }
+
         setContent {
             MaterialTheme {
                 MainScreen()
@@ -28,10 +46,22 @@ class MainActivity : ComponentActivity() {
 fun MainScreen() {
     val context = LocalContext.current
     var isServiceEnabled by remember { mutableStateOf(false) }
+    var selectedFiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var isRunning by remember { mutableStateOf(false) }
 
     // 检测无障碍服务状态
     LaunchedEffect(Unit) {
         isServiceEnabled = isAccessibilityServiceEnabled(context)
+    }
+
+    // 文件选择器
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        selectedFiles = uris.filter { uri ->
+            val name = getFilenameFromUri(context, uri)
+            name?.endsWith(".amproj") == true
+        }
     }
 
     Surface(
@@ -42,56 +72,126 @@ fun MainScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // 标题
             Text(
                 text = "Automotion",
                 style = MaterialTheme.typography.headlineLarge
             )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
             Text(
                 text = "Alemon 批量渲染自动化",
                 style = MaterialTheme.typography.bodyLarge
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
+            // 无障碍服务状态
             if (!isServiceEnabled) {
-                // 引导用户开启无障碍服务
-                Text(
-                    text = "⚠️ 请先开启无障碍服务",
-                    color = MaterialTheme.colorScheme.error
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = {
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                }) {
-                    Text("前往设置")
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "⚠️ 请先开启无障碍服务",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(onClick = {
+                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        }) {
+                            Text("前往设置")
+                        }
+                    }
                 }
             } else {
-                Text(
-                    text = "✅ 无障碍服务已开启",
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "✅ 无障碍服务已开启",
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
 
-                // TODO: 文件选择器 + 渲染控制按钮
-                Button(onClick = {
-                    // TODO: 启动文件选择 → 发送到 AutomationService
-                }) {
-                    Text("选择 amproj 文件")
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 文件选择
+            Button(
+                onClick = {
+                    filePickerLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                },
+                enabled = isServiceEnabled && !isRunning,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("选择 amproj 文件")
+            }
+
+            // 已选文件列表
+            if (selectedFiles.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "已选择 ${selectedFiles.size} 个文件：",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                ) {
+                    items(selectedFiles) { uri ->
+                        val name = getFilenameFromUri(context, uri) ?: "未知文件"
+                        Text(
+                            "  • $name",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+
+            // 开始/停止按钮
+            if (selectedFiles.isNotEmpty()) {
+                Button(
+                    onClick = {
+                        if (!isRunning) {
+                            isRunning = true
+                            val intent = Intent(context, RenderForegroundService::class.java).apply {
+                                putParcelableArrayListExtra("file_uris", ArrayList(selectedFiles))
+                            }
+                            context.startForegroundService(intent)
+                        } else {
+                            isRunning = false
+                            context.stopService(Intent(context, RenderForegroundService::class.java))
+                        }
+                    },
+                    enabled = isServiceEnabled,
+                    colors = if (isRunning) {
+                        ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    } else {
+                        ButtonDefaults.buttonColors()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (isRunning) "停止渲染" else "开始批量渲染")
                 }
             }
         }
     }
 }
 
-/**
- * 检测 AutomationService 是否已在无障碍设置中启用
- */
 fun isAccessibilityServiceEnabled(context: android.content.Context): Boolean {
     val serviceName = "${context.packageName}/${AutomationService::class.java.canonicalName}"
     val enabledServices = Settings.Secure.getString(
@@ -99,4 +199,12 @@ fun isAccessibilityServiceEnabled(context: android.content.Context): Boolean {
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
     ) ?: return false
     return enabledServices.contains(serviceName)
+}
+
+private fun getFilenameFromUri(context: android.content.Context, uri: Uri): String? {
+    return context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+        val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+        cursor.moveToFirst()
+        if (nameIndex >= 0) cursor.getString(nameIndex) else null
+    }
 }
