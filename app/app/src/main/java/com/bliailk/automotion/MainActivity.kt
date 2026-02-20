@@ -1,10 +1,14 @@
 package com.bliailk.automotion
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -19,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.delay
@@ -35,6 +40,15 @@ class MainActivity : ComponentActivity() {
                 startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
                     data = Uri.parse("package:$packageName")
                 })
+            }
+        }
+
+        // 请求通知权限（Android 13+），前台服务必需
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
             }
         }
 
@@ -192,14 +206,21 @@ fun MainScreen() {
                 Button(
                     onClick = {
                         if (!isRunning) {
-                            isRunning = true
-                            val intent = Intent(context, RenderForegroundService::class.java).apply {
-                                putParcelableArrayListExtra("file_uris", ArrayList(selectedFiles))
+                            try {
+                                isRunning = true
+                                val intent = Intent(context, RenderForegroundService::class.java).apply {
+                                    putParcelableArrayListExtra("file_uris", ArrayList(selectedFiles))
+                                }
+                                context.startForegroundService(intent)
+                                Toast.makeText(context, "渲染服务已启动", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                isRunning = false
+                                Toast.makeText(context, "启动失败: ${e.message}", Toast.LENGTH_LONG).show()
                             }
-                            context.startForegroundService(intent)
                         } else {
                             isRunning = false
                             context.stopService(Intent(context, RenderForegroundService::class.java))
+                            Toast.makeText(context, "渲染已停止", Toast.LENGTH_SHORT).show()
                         }
                     },
                     enabled = isServiceEnabled,
