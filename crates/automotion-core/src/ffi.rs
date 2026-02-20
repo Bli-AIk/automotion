@@ -10,20 +10,20 @@ use crate::{amproj, config, split, ui_parser};
 
 #[derive(Debug, uniffi::Error)]
 pub enum AutomotionError {
-    General { message: String },
+    General { reason: String },
 }
 
 impl std::fmt::Display for AutomotionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AutomotionError::General { message } => write!(f, "{message}"),
+            AutomotionError::General { reason } => write!(f, "{reason}"),
         }
     }
 }
 
 impl From<String> for AutomotionError {
     fn from(s: String) -> Self {
-        AutomotionError::General { message: s }
+        AutomotionError::General { reason: s }
     }
 }
 
