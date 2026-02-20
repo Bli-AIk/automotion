@@ -52,7 +52,7 @@ class RenderEngine(private val context: Context) {
     }
 
     /**
-     * 批量处理 amproj 文件列表
+     * 批量处理 amproj 文件列表（从 Uri，如文件选择器）
      */
     suspend fun batchRender(files: List<Uri>) = withContext(Dispatchers.IO) {
         val total = files.size
@@ -67,14 +67,50 @@ class RenderEngine(private val context: Context) {
             AppLog.log(TAG, "▶ 开始处理 [${ index + 1 }/$total]: $filename")
 
             try {
-                processSingleProject(uri, filename)
+                val downloadFile = copyToDownload(uri, filename)
+                processSingleProject(downloadFile, filename)
                 success++
             } catch (e: Exception) {
                 failed++
                 Log.e(TAG, "工程处理失败: $filename", e)
                 AppLog.log(TAG, "❌ $filename 失败: ${e.message}")
                 onProgress?.invoke(index + 1, total, "❌ $filename: ${e.message}")
-                // 出错后强制停止 Alemon，确保不影响下一个
+                forceStopAlemon()
+            }
+        }
+
+        onComplete?.invoke(success, failed)
+    }
+
+    /**
+     * 批量处理本地文件列表（用于拆分后渲染，文件已在设备上）
+     */
+    suspend fun batchRenderFiles(files: List<File>) = withContext(Dispatchers.IO) {
+        val total = files.size
+        var success = 0
+        var failed = 0
+
+        for ((index, file) in files.withIndex()) {
+            if (cancelled) break
+
+            val filename = file.name
+            onProgress?.invoke(index + 1, total, "处理中: $filename")
+            AppLog.log(TAG, "▶ 开始处理 [${ index + 1 }/$total]: $filename")
+
+            try {
+                // 复制到 Download 以便 FileProvider 共享给 Alemon
+                val downloadFile = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    filename
+                )
+                file.copyTo(downloadFile, overwrite = true)
+                processSingleProject(downloadFile, filename)
+                success++
+            } catch (e: Exception) {
+                failed++
+                Log.e(TAG, "工程处理失败: $filename", e)
+                AppLog.log(TAG, "❌ $filename 失败: ${e.message}")
+                onProgress?.invoke(index + 1, total, "❌ $filename: ${e.message}")
                 forceStopAlemon()
             }
         }
@@ -84,15 +120,14 @@ class RenderEngine(private val context: Context) {
 
     /**
      * 处理单个 amproj 工程（对应 CLI 的 9 阶段流程）
+     * @param downloadFile 已在 Download 目录中的文件
      */
-    private suspend fun processSingleProject(uri: Uri, filename: String) {
+    private suspend fun processSingleProject(downloadFile: File, filename: String) {
         val service = AutomationService.instance
             ?: throw IllegalStateException("无障碍服务未运行")
 
-        // 阶段 1-2: 复制文件到 Download 并触发导入
-        Log.i(TAG, "[1/9] 复制文件到 Download: $filename")
-        AppLog.log(TAG, "[1/9] 复制文件: $filename")
-        val downloadFile = copyToDownload(uri, filename)
+        // 阶段 1: 分析文件
+        AppLog.log(TAG, "[1/9] 分析文件: $filename")
 
         // 分析 amproj 类型和标题（在导入前完成）
         val (projType, projTitle) = try {

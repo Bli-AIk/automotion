@@ -30,7 +30,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,6 +74,10 @@ fun MainScreen() {
     var selectedFiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var isRunning by remember { mutableStateOf(false) }
     var showLog by remember { mutableStateOf(false) }
+    // 0 = 渲染, 1 = 拆分, 2 = 拆分并渲染
+    var mode by remember { mutableIntStateOf(0) }
+    val modeLabels = listOf("批量渲染", "拆分", "拆分并渲染")
+    val coroutineScope = rememberCoroutineScope()
 
     // 日志收集
     val logLines = remember { mutableStateListOf<String>() }
@@ -272,33 +278,102 @@ fun MainScreen() {
 
             // 底部按钮区域
             Column(modifier = Modifier.fillMaxWidth()) {
-                // 开始/停止按钮
+                // 模式选择
+                if (!isRunning) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        modeLabels.forEachIndexed { index, label ->
+                            FilterChip(
+                                selected = mode == index,
+                                onClick = { mode = index },
+                                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+
+                // 主操作按钮
                 if (selectedFiles.isNotEmpty()) {
                     Button(
                         onClick = {
-                            if (!isRunning) {
-                                try {
-                                    isRunning = true
-                                    showLog = true  // 自动切到日志视图
-                                    AppLog.log("UI", "开始渲染 ${selectedFiles.size} 个文件")
-                                    val intent = Intent(context, RenderForegroundService::class.java).apply {
-                                        putParcelableArrayListExtra("file_uris", ArrayList(selectedFiles))
-                                    }
-                                    context.startForegroundService(intent)
-                                    Toast.makeText(context, "渲染服务已启动", Toast.LENGTH_SHORT).show()
-                                } catch (e: Exception) {
-                                    isRunning = false
-                                    AppLog.log("UI", "❌ 启动失败: ${e.message}")
-                                    Toast.makeText(context, "启动失败: ${e.message}", Toast.LENGTH_LONG).show()
-                                }
-                            } else {
+                            if (isRunning) {
                                 isRunning = false
                                 context.stopService(Intent(context, RenderForegroundService::class.java))
-                                AppLog.log("UI", "用户停止渲染")
-                                Toast.makeText(context, "渲染已停止", Toast.LENGTH_SHORT).show()
+                                AppLog.log("UI", "用户停止操作")
+                                Toast.makeText(context, "已停止", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+
+                            when (mode) {
+                                0 -> {
+                                    // 批量渲染
+                                    try {
+                                        isRunning = true
+                                        showLog = true
+                                        AppLog.log("UI", "开始渲染 ${selectedFiles.size} 个文件")
+                                        val intent = Intent(context, RenderForegroundService::class.java).apply {
+                                            putExtra("mode", "render")
+                                            putParcelableArrayListExtra("file_uris", ArrayList(selectedFiles))
+                                        }
+                                        context.startForegroundService(intent)
+                                        Toast.makeText(context, "渲染服务已启动", Toast.LENGTH_SHORT).show()
+                                    } catch (e: Exception) {
+                                        isRunning = false
+                                        AppLog.log("UI", "❌ 启动失败: ${e.message}")
+                                        Toast.makeText(context, "启动失败: ${e.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                                1 -> {
+                                    // 仅拆分（不需要无障碍服务）
+                                    isRunning = true
+                                    showLog = true
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        try {
+                                            performSplit(context, selectedFiles)
+                                        } catch (e: Exception) {
+                                            AppLog.log("UI", "❌ 拆分失败: ${e.message}")
+                                        } finally {
+                                            isRunning = false
+                                        }
+                                    }
+                                }
+                                2 -> {
+                                    // 拆分并渲染
+                                    try {
+                                        isRunning = true
+                                        showLog = true
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            try {
+                                                val splitFiles = performSplit(context, selectedFiles)
+                                                if (splitFiles.isNotEmpty()) {
+                                                    AppLog.log("UI", "开始渲染 ${splitFiles.size} 个拆分文件")
+                                                    val intent = Intent(context, RenderForegroundService::class.java).apply {
+                                                        putExtra("mode", "split-render")
+                                                        putStringArrayListExtra("file_paths", ArrayList(splitFiles.map { it.absolutePath }))
+                                                    }
+                                                    context.startForegroundService(intent)
+                                                } else {
+                                                    AppLog.log("UI", "⚠️ 拆分结果为空，无文件可渲染")
+                                                    isRunning = false
+                                                }
+                                            } catch (e: Exception) {
+                                                AppLog.log("UI", "❌ 拆分并渲染失败: ${e.message}")
+                                                isRunning = false
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        isRunning = false
+                                        AppLog.log("UI", "❌ 启动失败: ${e.message}")
+                                    }
+                                }
                             }
                         },
-                        enabled = isServiceEnabled,
+                        enabled = if (mode == 1) !isRunning else isServiceEnabled && !isRunning || isRunning,
                         colors = if (isRunning) {
                             ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                         } else {
@@ -306,7 +381,7 @@ fun MainScreen() {
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (isRunning) "停止渲染" else "开始批量渲染")
+                        Text(if (isRunning) "停止" else modeLabels[mode])
                     }
                 }
 
@@ -337,4 +412,55 @@ private fun getFilenameFromUri(context: android.content.Context, uri: Uri): Stri
         cursor.moveToFirst()
         if (nameIndex >= 0) cursor.getString(nameIndex) else null
     }
+}
+
+/**
+ * 执行 amproj 拆分（复用 Rust 核心库的 split_amproj_to_dir）
+ * 返回拆分输出的文件列表
+ */
+private fun performSplit(context: android.content.Context, uris: List<Uri>): List<java.io.File> {
+    val allOutputs = mutableListOf<java.io.File>()
+    val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(
+        android.os.Environment.DIRECTORY_DOWNLOADS
+    )
+    val splitOutputDir = java.io.File(
+        context.getExternalFilesDir(null), "split_output"
+    )
+    splitOutputDir.mkdirs()
+
+    for (uri in uris) {
+        val filename = getFilenameFromUri(context, uri) ?: continue
+        AppLog.log("Split", "▶ 拆分: $filename")
+
+        // 复制到临时位置供 Rust 读取
+        val tempFile = java.io.File(downloadDir, filename)
+        try {
+            val inputStream = context.contentResolver.openInputStream(uri)
+            if (inputStream == null) {
+                AppLog.log("Split", "❌ 无法读取文件: $filename")
+                continue
+            }
+            inputStream.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            // 调用 Rust 核心库拆分
+            val outputPaths = uniffi.automotion_core.splitAmprojToDir(
+                tempFile.absolutePath,
+                splitOutputDir.absolutePath
+            )
+
+            AppLog.log("Split", "✅ $filename → ${outputPaths.size} 个元素")
+            allOutputs.addAll(outputPaths.map { java.io.File(it) })
+        } catch (e: Exception) {
+            AppLog.log("Split", "❌ 拆分失败: ${e.message}")
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    AppLog.log("Split", "拆分完成，共 ${allOutputs.size} 个文件")
+    return allOutputs
 }

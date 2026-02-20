@@ -41,13 +41,19 @@ class RenderForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val uris = intent?.getParcelableArrayListExtra<Uri>("file_uris") ?: run {
+        val mode = intent?.getStringExtra("mode") ?: "render"
+        val uris = intent?.getParcelableArrayListExtra<Uri>("file_uris")
+        val filePaths = intent?.getStringArrayListExtra("file_paths")
+
+        if (uris == null && filePaths == null) {
             stopSelf()
             return START_NOT_STICKY
         }
 
+        val totalCount = uris?.size ?: filePaths?.size ?: 0
+
         // 启动前台通知
-        val notification = buildNotification("准备中...", 0, uris.size)
+        val notification = buildNotification("准备中...", 0, totalCount)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -74,7 +80,13 @@ class RenderForegroundService : Service() {
 
         scope.launch {
             try {
-                engine?.batchRender(uris)
+                if (filePaths != null) {
+                    // 本地文件模式（拆分后渲染）
+                    val files = filePaths.map { java.io.File(it) }
+                    engine?.batchRenderFiles(files)
+                } else if (uris != null) {
+                    engine?.batchRender(uris)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "批量渲染异常", e)
                 AppLog.log(TAG, "❌ 批量渲染异常: ${e.message}")
