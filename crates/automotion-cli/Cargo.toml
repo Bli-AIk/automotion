@@ -1,0 +1,13 @@
+[package]
+name = "automotion-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "automotion"
+path = "src/main.rs"
+
+[dependencies]
+automotion-core = { path = "../automotion-core" }
+ctrlc = "3"
+clap = { version = "4", features = ["derive"] }

@@ -3,9 +3,9 @@
 [![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-APACHE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/automotion.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/automotion.svg"/> <br>
 <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" />
 
-> 当前状态：🚧 早期开发中（初始版本开发中）
+> 当前状态：🚧 早期开发中
 
-**automotion** — 一个通过 ADB 自动化批量导出 Alight Motion 工程文件的实验性工具。
+**automotion** — 一个自动化批量导出 Alight Motion 工程文件的实验性工具。
 
 | English                | 简体中文   |
 |------------------------|-----------|
@@ -13,93 +13,119 @@
 
 ## 简介
 
-`automotion` 是一个基于 Rust 的 ADB 自动化工具，用于通过 USB 调试在 Android 设备上批量处理 `.amproj`（Alight Motion 工程）文件。  
-它解决了逐个手动导入、导出和渲染 Alight Motion 工程的繁琐工作流程，允许用户自动化从推送到拉取的整个流水线。
+`automotion` 是一个基于 Rust 的自动化工具，用于批量处理 `.amproj`（Alight Motion 工程）文件并渲染为视频。  
+它解决了逐个手动导入、导出和渲染 Alight Motion 工程的繁琐工作流程。
 
-使用 `automotion`，你只需将 `.amproj` 文件放入 `input_projects/` 目录并运行一条命令。  
-工具会自动处理推送文件到手机、导入 Alemon、操作 UI、触发导出、监控渲染进度，以及拉取生成的 `.mp4` 视频。
+本项目提供两种接口：
+- **CLI 工具** (`automotion-cli`) — 桌面端 ADB 自动化，从 Linux 主机遥控手机
+- **Android 应用** — 设备端伴侣应用，基于 AccessibilityService 的 UI 自动化
+
+两者共享同一个 Rust 核心库 (`automotion-core`)，通过 [UniFFI](https://mozilla.github.io/uniffi-rs/) 实现 `.amproj` 解析和拆分逻辑的复用。
 
 ## 功能
 
-* **批量渲染** — 自动处理 `input_projects/` 中的所有 `.amproj` 文件并导出为 MP4 视频
+* **批量渲染** — 自动处理多个 `.amproj` 文件并导出为 MP4 视频
 * **拆分** — 将大型 `.amproj` 项目拆分为独立的元素文件
 * **拆分渲染** — 拆分项目后将每个元素分别渲染为视频
-* **动态 UI 交互** — 通过 `uiautomator` XML 解析按 `resource-id` 和 `text` 查找 UI 元素（不硬编码坐标）
-* **渲染状态检测** — 轮询 `saveButton` 出现以检测渲染完成，支持长达 30 分钟的渲染
+* **动态 UI 交互** — 按 `resource-id` 和 `text` 查找 UI 元素（不硬编码坐标）
+* **渲染状态检测** — 监控输出文件稳定性以检测渲染完成
 * **弹窗处理** — 自动关闭常见弹窗（缺失字体、缺失媒体、广告提示等）
-* **设备保护** — 运行期间保持屏幕常亮，退出时恢复（包括 Ctrl+C 中断）
 * **清洁工作流** — 每个项目处理完成后清理手机端文件，防止存储膨胀
 
-## 使用方法
+## 架构
 
-1. **安装 Rust**（如未安装）：
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
+```
+automotion/
+├── crates/
+│   ├── automotion-core/    # 共享 Rust 核心库（amproj 解析、拆分、配置）
+│   │   └── src/
+│   │       ├── amproj.rs   # .amproj 分析（ZIP/XML 解析）
+│   │       ├── split.rs    # 工程拆分逻辑
+│   │       ├── ffi.rs      # UniFFI FFI 导出
+│   │       └── ui_parser.rs # uiautomator XML 解析
+│   └── automotion-cli/     # 桌面 CLI 工具（ADB 命令）
+└── app/                    # Android 伴侣应用（Kotlin + Compose）
+    └── app/src/main/java/com/bliailk/automotion/
+        ├── MainActivity.kt           # UI：文件选择、模式选择、日志查看
+        ├── RenderEngine.kt           # 9 阶段自动化状态机
+        ├── AutomationService.kt      # AccessibilityService UI 自动化
+        └── RenderForegroundService.kt # 前台服务（后台工作）
+```
 
-2. **克隆仓库**：
+## Android 应用
 
-   ```bash
-   git clone https://github.com/Bli-AIk/automotion.git
-   cd automotion
-   ```
+Android 伴侣应用直接在设备上运行，使用 AccessibilityService 自动化 Alemon 的 UI。相比基于 ADB 的 `uiautomator` 更快、更可靠。
 
-3. **构建并运行**：
+### 工作原理
 
-   ```bash
-   cargo run
-   ```
+1. 通过系统文件选择器选取 `.amproj` 文件（支持多选）
+2. 选择模式：**渲染**、**拆分** 或 **拆分并渲染**
+3. 应用依次启动 Alemon 处理每个文件，操作 UI 触发导出，监控渲染进度，自动跳转至下一个文件
 
-4. **基本命令**：
+### 关键技术细节
 
-   * 批量渲染所有工程：`cargo run -- render`
-   * 将工程拆分为元素：`cargo run -- split <file.amproj>`
-   * 拆分并渲染：`cargo run -- split-render <file.amproj>`
+- **后台 Activity 启动**：在 Android 12+ 上，应用通过自然 BACK 导航（而非 `force-stop`）从 Alemon 返回自身 Activity，保持前台状态以绕过后台 Activity 启动限制
+- **跨窗口节点搜索**：AccessibilityService 搜索所有窗口（不仅是活跃窗口）中的 UI 元素
+- **9 阶段流水线**：导入 → 等待加载 → 导航到导出 → 配置导出 → 确认导出 → 等待渲染 → 保存 → 清理 → 下一个文件
 
-5. **环境配置**：
-   * 通过 USB 连接 Android 设备并开启 ADB 调试
-   * 在设备上安装 Alemon 应用（包名：`com.taffy.alemon`）
-   * 将 `.amproj` 文件放入 `./input_projects/` 目录
-   * 渲染完成的视频将保存到 `./output_videos/`
+### 构建 Android 应用
 
-## 构建方法
+**前置要求：**
+- 安装 Android SDK 及 NDK
+- `cargo-ndk`：`cargo install cargo-ndk`
+- Rust Android 目标：`rustup target add aarch64-linux-android armv7-linux-androideabi`
+
+**构建步骤：**
+
+```bash
+# 1. 构建 Rust .so 并生成 UniFFI Kotlin 绑定
+cd app && bash build-rust.sh
+
+# 2. 构建 APK
+./gradlew assembleDebug
+
+# 3. 安装到设备
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+### 设备端设置
+
+1. **启用无障碍服务**：设置 → 无障碍 → Automotion → 开启
+2. **授予存储权限**：首次启动时应用会自动请求
+3. **安装 Alemon**：包名必须为 `com.taffy.alemon`
+4. 打开应用，选择 `.amproj` 文件，选择模式，点击开始
+
+## CLI 工具
+
+CLI 工具在 Linux 主机上运行，通过 ADB 远程控制手机。
+
+### 使用方法
+
+```bash
+# 将 .amproj 文件放入 input_projects/
+cargo run -p automotion-cli -- render
+cargo run -p automotion-cli -- split <file.amproj>
+cargo run -p automotion-cli -- split-render <file.amproj>
+```
 
 ### 前置要求
 
-* Rust 1.85 或更高版本（edition 2024）
-* 已安装 ADB（Android Debug Bridge）并在 PATH 中
+* Rust 1.85+（edition 2024）
+* 已安装 ADB 并在 PATH 中
 * Android 设备通过 USB 连接并开启调试模式
+* 已安装 Alemon 应用（包名：`com.taffy.alemon`）
 
-### 构建步骤
+## 构建方法
 
-1. **克隆仓库**：
-
-   ```bash
-   git clone https://github.com/Bli-AIk/automotion.git
-   cd automotion
-   ```
-
-2. **构建项目**：
-
-   ```bash
-   cargo build --release
-   ```
-
-3. **运行测试**：
-
-   ```bash
-   cargo test
-   ```
-
-4. **全局安装**（可选）：
-
-   ```bash
-   cargo install --path .
-   ```
+```bash
+git clone https://github.com/Bli-AIk/automotion.git
+cd automotion
+cargo build --release
+```
 
 ## 依赖
 
-本项目使用以下 crate：
+### Rust Crates
 
 | Crate                                           | 版本  | 说明                             |
 | ----------------------------------------------- | ----- | -------------------------------- |
@@ -109,6 +135,13 @@
 | [roxmltree](https://crates.io/crates/roxmltree) | 0.20  | XML 解析（amproj 内部结构）       |
 | [chrono](https://crates.io/crates/chrono)       | 0.4   | 日志时间戳格式化                  |
 | [ctrlc](https://crates.io/crates/ctrlc)         | 3     | 信号处理（优雅退出）              |
+| [uniffi](https://crates.io/crates/uniffi)       | 0.29  | Rust↔Kotlin FFI 桥接             |
+
+### Android 应用
+
+* Kotlin + Jetpack Compose
+* Android SDK 35，minSdk 26
+* 通过 UniFFI 生成的 Kotlin 绑定调用 `automotion-core`
 
 ## 贡献
 

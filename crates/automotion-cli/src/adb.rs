@@ -4,8 +4,7 @@
 
 use std::process::Command;
 
-use crate::config;
-use crate::logger;
+use automotion_core::{config, logger};
 
 /// 执行 adb 命令并返回 stdout（去除尾部空白）
 pub fn run(args: &[&str]) -> Result<String, String> {
