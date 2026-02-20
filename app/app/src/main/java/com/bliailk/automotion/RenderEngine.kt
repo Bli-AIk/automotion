@@ -37,8 +37,8 @@ class RenderEngine(private val context: Context) {
         const val UI_WAIT_TIMEOUT_MS = 10_000L
         const val SHARE_WAIT_TIMEOUT_MS = 30_000L
         const val MAX_RENDER_WAIT_MS = 1_800_000L // 30分钟
-        const val STABLE_THRESHOLD_MS = 15_000L
-        const val POLL_INTERVAL_MS = 3_000L
+        const val STABLE_THRESHOLD_MS = 3_000L    // 文件大小稳定阈值（本地写入很快）
+        const val POLL_INTERVAL_MS = 1_000L       // 文件轮询间隔
     }
 
     // 状态回调
@@ -332,14 +332,22 @@ class RenderEngine(private val context: Context) {
 
     private fun forceStopAlemon() {
         try {
-            // AccessibilityService 无法 force-stop，但可以通过全局 ACTION 或 usageStats
-            // 最直接的方式是使用 Runtime.exec（需要 root 或 ADB），
-            // 作为替代：连续按返回键退出 Alemon
+            // 先回到桌面，让 Alemon 进入后台
             val service = AutomationService.instance
-            repeat(5) {
-                service?.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-                Thread.sleep(300)
-            }
+            service?.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
+            Thread.sleep(500)
+
+            // 使用 ActivityManager 杀后台进程
+            val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            am.killBackgroundProcesses(ALEMON_PACKAGE)
+
+            // 同时尝试 Runtime.exec（部分设备支持）
+            try {
+                Runtime.getRuntime().exec(arrayOf("am", "force-stop", ALEMON_PACKAGE))
+            } catch (_: Exception) {}
+
+            Thread.sleep(500)
+            AppLog.log(TAG, "已清理 Alemon 进程")
         } catch (e: Exception) {
             Log.w(TAG, "退出 Alemon 失败: ${e.message}")
         }
