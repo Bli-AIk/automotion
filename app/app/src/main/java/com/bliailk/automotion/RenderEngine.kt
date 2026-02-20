@@ -1,7 +1,5 @@
 package com.bliailk.automotion
 
-import android.app.AlarmManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -154,11 +152,12 @@ class RenderEngine(private val context: Context) {
         Log.i(TAG, "[3/9] 确认导入对话框")
         AppLog.log(TAG, "[3/9] 确认导入对话框")
         if (!waitAndTapText(service, "导入", UI_WAIT_TIMEOUT_MS)) {
-            // 重试：强制停止后重新打开
+            // 重试：强制停止 → 回到 Automotion 前台 → 重新打开
             Log.w(TAG, "导入对话框未出现，重试中...")
             AppLog.log(TAG, "⚠️ 导入对话框未出现，重试...")
             forceStopAlemon()
-            delay(2000)
+            bringOurActivityToFront(service)
+            delay(1000)
             launchAlemonWithFile(downloadFile)
             delay(5000)
             if (!waitAndTapText(service, "导入", 15_000L)) {
@@ -290,6 +289,8 @@ class RenderEngine(private val context: Context) {
         AppLog.log(TAG, "[9/9] 清理")
         forceStopAlemon()
         downloadFile.delete()
+        // 回到 automotion 前台，确保下一轮 startActivity 不受后台限制
+        bringOurActivityToFront(service)
 
         Log.i(TAG, "工程 [$filename] 处理完成 ✓")
         AppLog.log(TAG, "✅ $filename 处理完成")
@@ -310,33 +311,17 @@ class RenderEngine(private val context: Context) {
         return target
     }
 
-    private var pendingIntentCounter = 0
-
     private fun launchAlemonWithFile(file: File) {
         val uri = androidx.core.content.FileProvider.getUriForFile(
             context, "${context.packageName}.fileprovider", file
         )
-        // 预先授予 URI 读取权限给 Alemon
-        context.grantUriPermission(ALEMON_PACKAGE, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/zip")
             setPackage(ALEMON_PACKAGE)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-
-        // 使用 AlarmManager 发送 PendingIntent，由系统服务发起 Activity 启动
-        // 绕过 Android 12+ 后台 Activity 启动限制（sender 是 AlarmManager，非后台 app）
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            pendingIntentCounter++,
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT
-        )
-
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarmManager.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 50, pendingIntent)
+        context.startActivity(intent)
     }
 
     private fun launchAlemonMain() {
@@ -344,6 +329,33 @@ class RenderEngine(private val context: Context) {
             ?: throw RuntimeException("Alemon 未安装")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
+    }
+
+    /**
+     * 通过「最近任务」找到并点击 Automotion，将我们的 Activity 拉回前台。
+     * 这确保后续 startActivity 不受 Android 12+ 后台启动限制。
+     */
+    private suspend fun bringOurActivityToFront(service: AutomationService) {
+        // 打开最近任务
+        service.performGlobalAction(
+            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS
+        )
+        delay(1000)
+
+        // 在最近任务中找到 Automotion 并点击
+        val appNode = service.findNodeByText("Automotion")
+        if (appNode != null) {
+            service.clickNode(appNode)
+            delay(1000)
+            AppLog.log(TAG, "已从最近任务切回 Automotion")
+        } else {
+            // 降级：按 HOME 后尝试直接 startActivity（可能被拦截）
+            AppLog.log(TAG, "⚠️ 未在最近任务中找到 Automotion")
+            service.performGlobalAction(
+                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
+            )
+            delay(500)
+        }
     }
 
     private fun forceStopAlemon() {
