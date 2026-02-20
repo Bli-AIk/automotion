@@ -1,20 +1,18 @@
 // =============================================================================
-// amproj 修补模块 — 资源路径修复与提取
+// amproj 修补模块 — 资源路径修复
 // =============================================================================
 //
-// 解决 AM 工程"贴图路径丢失"问题：
-//   amproj 内嵌素材，但目标设备上不存在对应文件。
+// 解决跨设备传输 amproj 时"贴图丢失"问题。
 //
-// 两种修补模式:
-//   1. restore（尊重原路径）: 从 amproj 提取嵌入资源到本地目录
-//   2. unify（统一化路径）: 提取资源 + 修改 amproj 内 URI 指向指定设备目录
+// 原理：Alemon 导入 amproj 时，将 amproj: URI 重映射为 am:SHA1.ext 内部 URI，
+// 但此重映射可能因中文文件名等原因失败。本模块直接将 URI 预转换为 am:SHA1.ext
+// 格式，绕过导入重映射步骤。
 //
 // 资源引用属性:
 //   - <media uri="amproj:文件名"> — 资源声明
 //   - fillImage="amproj:文件名"   — 形状填充图片
 //   - src="amproj:文件名"         — 音频引用
 
-use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -22,34 +20,19 @@ use regex::Regex;
 
 use crate::logger;
 
-/// 修补模式
-#[derive(Debug, Clone, Copy)]
-pub enum FixMode {
-    /// 提取嵌入资源到本地目录，不修改 amproj
-    Restore,
-    /// 提取资源 + 修改 amproj URI 指向目标设备路径
-    Unify,
-}
-
 /// 修补结果
 pub struct FixResult {
-    /// 提取的资源文件列表（本地路径）
-    pub extracted_files: Vec<PathBuf>,
-    /// 如果是 unify 模式，输出的修改后 amproj 路径
-    pub output_amproj: Option<PathBuf>,
+    /// 输出的修改后 amproj 路径
+    pub output_amproj: PathBuf,
 }
 
-/// 执行 amproj 修补
+/// 执行 amproj 修补：将 amproj: URI 替换为 am:SHA1.ext
 ///
 /// - `input`: amproj 文件路径
-/// - `output_dir`: 资源提取目标目录
-/// - `mode`: 修补模式
-/// - `device_target_dir`: unify 模式下的设备端目标目录
+/// - `output_dir`: 输出目录
 pub fn fix_amproj(
     input: &Path,
     output_dir: &Path,
-    mode: FixMode,
-    device_target_dir: Option<&str>,
 ) -> Result<FixResult, String> {
     logger::step(&format!("开始修补: {}", input.display()));
 
@@ -84,82 +67,37 @@ pub fn fix_amproj(
         return Err("amproj 中未找到 XML 文件".into());
     }
 
-    // 收集所有嵌入资源引用
-    let embedded_refs = collect_embedded_refs(&xml_content);
-    logger::info(&format!("发现 {} 个嵌入资源引用", embedded_refs.len()));
-
-    for r in &embedded_refs {
-        logger::info(&format!("  资源: {r}"));
-    }
-
     // 确定项目名称（从 XML title 属性或文件名）
     let proj_name = extract_project_name(&xml_content, input);
-    let assets_dir = output_dir.join(&proj_name);
 
     // 创建输出目录
-    std::fs::create_dir_all(&assets_dir)
+    std::fs::create_dir_all(output_dir)
         .map_err(|e| format!("创建输出目录失败: {e}"))?;
 
-    // 提取资源文件
-    let mut extracted = Vec::new();
-    for (name, data) in &archive_files {
-        if name.ends_with(".xml") || name == "manifest.txt" {
-            continue;
-        }
-        if embedded_refs.contains(name.as_str()) {
-            let out_path = assets_dir.join(name);
-            std::fs::write(&out_path, data)
-                .map_err(|e| format!("写入 {name} 失败: {e}"))?;
-            extracted.push(out_path);
-            logger::info(&format!("  提取: {name}"));
-        }
+    // 从 manifest.txt 构建 filename → SHA1 映射
+    let manifest = archive_files
+        .iter()
+        .find(|(name, _)| name == "manifest.txt")
+        .ok_or("amproj 中未找到 manifest.txt")?;
+    let manifest_str = String::from_utf8_lossy(&manifest.1);
+    let sig_map = parse_manifest(&manifest_str);
+
+    logger::info(&format!("manifest.txt 解析出 {} 条映射", sig_map.len()));
+    for (filename, sha1) in &sig_map {
+        logger::info(&format!("  {} → {}", filename, sha1));
     }
 
-    logger::step(&format!(
-        "已提取 {} 个资源到 {}",
-        extracted.len(),
-        assets_dir.display()
-    ));
+    let new_xml = rewrite_to_am_direct(&xml_content, &sig_map);
+    let out_amproj = output_dir.join(format!("{}_fixed.amproj", proj_name));
 
-    // unify 模式：修改 amproj
-    let output_amproj = match mode {
-        FixMode::Restore => None,
-        FixMode::Unify => {
-            let target_dir = device_target_dir.unwrap_or("/sdcard/Download/automotion_assets");
-            let device_path = format!("{}/{}", target_dir.trim_end_matches('/'), proj_name);
+    write_fixed_amproj(&out_amproj, &xml_name, &new_xml, &archive_files)?;
 
-            let new_xml = rewrite_resource_paths(&xml_content, &device_path);
-            let out_amproj = output_dir.join(format!("{}_fixed.amproj", proj_name));
-
-            write_fixed_amproj(&out_amproj, &xml_name, &new_xml, &archive_files)?;
-
-            logger::step(&format!(
-                "已生成修复后 amproj: {}",
-                out_amproj.display()
-            ));
-            logger::info(&format!(
-                "设备端资源路径: file://{}",
-                device_path
-            ));
-
-            Some(out_amproj)
-        }
-    };
+    logger::step(&format!("已生成修复 amproj: {}", out_amproj.display()));
+    logger::info("URI 格式: amproj:filename → am:SHA1.ext（绕过导入重映射）");
 
     Ok(FixResult {
-        extracted_files: extracted,
-        output_amproj,
+        output_amproj: out_amproj,
     })
-}
-
-/// 收集 XML 中所有 `amproj:` 前缀的嵌入资源文件名
-fn collect_embedded_refs(xml: &str) -> HashSet<&str> {
-    let mut refs = HashSet::new();
-    let re = Regex::new(r#"amproj:([^"]+)"#).unwrap();
-    for cap in re.captures_iter(xml) {
-        refs.insert(cap.get(1).unwrap().as_str());
-    }
-    refs
 }
 
 /// 从 XML title 属性或文件名提取项目名
@@ -177,16 +115,6 @@ fn extract_project_name(xml: &str, input: &Path) -> String {
         .file_stem()
         .map(|s| sanitize_dirname(&s.to_string_lossy()))
         .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// 将 XML 中所有 `amproj:filename` 替换为 `file:///device_path/filename`
-fn rewrite_resource_paths(xml: &str, device_path: &str) -> String {
-    let re = Regex::new(r#"amproj:([^"]+)"#).unwrap();
-    re.replace_all(xml, |caps: &regex::Captures| {
-        let filename = &caps[1];
-        format!("file:///{}/{}", device_path.trim_start_matches('/'), filename)
-    })
-    .to_string()
 }
 
 /// 写入修复后的 amproj ZIP（保留原嵌入资源）
@@ -236,4 +164,61 @@ fn sanitize_dirname(s: &str) -> String {
         })
         .collect();
     cleaned.trim().replace(' ', "_")
+}
+
+/// 解析 manifest.txt，返回 {filename → SHA1} 映射
+/// manifest 格式: `SHA1:filename` 或 `SHA1:proxyHash:filename`
+fn parse_manifest(manifest: &str) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(3, ':').collect();
+        match parts.len() {
+            2 => {
+                // SHA1:filename → proxyHash 同 SHA1
+                let sha1 = parts[0];
+                let filename = parts[1];
+                map.insert(filename.to_string(), sha1.to_string());
+            }
+            3 => {
+                // SHA1:proxyHash:filename
+                let proxy_hash = parts[1];
+                let filename = parts[2];
+                map.insert(filename.to_string(), proxy_hash.to_string());
+            }
+            _ => {}
+        }
+    }
+    map
+}
+
+/// 将 XML 中所有 `amproj:filename` 替换为 `am:SHA1.ext`
+fn rewrite_to_am_direct(
+    xml: &str,
+    sig_map: &std::collections::HashMap<String, String>,
+) -> String {
+    let re = Regex::new(r#"amproj:([^"]+)"#).unwrap();
+    re.replace_all(xml, |caps: &regex::Captures| {
+        let filename = &caps[1];
+        if let Some(sha1) = sig_map.get(filename) {
+            // 提取文件扩展名
+            let ext = Path::new(filename)
+                .extension()
+                .map(|e| e.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if ext.is_empty() {
+                format!("am:{sha1}")
+            } else {
+                format!("am:{sha1}.{ext}")
+            }
+        } else {
+            // 没找到映射，保留原 URI
+            logger::warn(&format!("manifest 中未找到文件: {filename}，保留原 URI"));
+            format!("amproj:{filename}")
+        }
+    })
+    .to_string()
 }

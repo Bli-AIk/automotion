@@ -37,10 +37,11 @@
 ```
 automotion/
 ├── crates/
-│   ├── automotion-core/    # 共享 Rust 核心库（amproj 解析、拆分、配置）
+│   ├── automotion-core/    # 共享 Rust 核心库（amproj 解析、拆分、修复、配置）
 │   │   └── src/
 │   │       ├── amproj.rs   # .amproj 分析（ZIP/XML 解析）
 │   │       ├── split.rs    # 工程拆分逻辑
+│   │       ├── fix.rs      # 资源路径修复（amproj: → am:SHA1.ext）
 │   │       ├── ffi.rs      # UniFFI FFI 导出
 │   │       └── ui_parser.rs # uiautomator XML 解析
 │   └── automotion-cli/     # 桌面 CLI 工具（ADB 命令）
@@ -51,6 +52,25 @@ automotion/
         ├── AutomationService.kt      # AccessibilityService UI 自动化
         └── RenderForegroundService.kt # 前台服务（后台工作）
 ```
+
+## 修复工具
+
+跨设备传输 `.amproj` 文件时，嵌入资源可能因 Alemon 导入时 URI 重映射 bug 而丢失（尤其是非 ASCII 文件名）。
+
+`fix` 命令将资源 URI 从 `amproj:filename` 预转换为 `am:SHA1.ext`（Alemon 导入后的内部格式），绕过有 bug 的重映射步骤，同时保留 ZIP 内的嵌入资源。
+
+```bash
+# 修复单个文件
+automotion fix run my_project.amproj
+
+# 修复 input_projects/ 下所有 amproj 文件
+automotion fix run
+
+# 指定输出目录
+automotion fix run my_project.amproj -o ./fixed_output
+```
+
+修复后的文件保存为 `{标题}_fixed.amproj`。
 
 ## Android 应用
 

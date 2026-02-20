@@ -37,10 +37,11 @@ Both share the same Rust core library (`automotion-core`) via [UniFFI](https://m
 ```
 automotion/
 ├── crates/
-│   ├── automotion-core/    # Shared Rust library (amproj parsing, splitting, config)
+│   ├── automotion-core/    # Shared Rust library (amproj parsing, splitting, fixing, config)
 │   │   └── src/
 │   │       ├── amproj.rs   # .amproj analysis (ZIP/XML parsing)
 │   │       ├── split.rs    # Project splitting logic
+│   │       ├── fix.rs      # Resource path fix (amproj: → am:SHA1.ext)
 │   │       ├── ffi.rs      # UniFFI FFI exports
 │   │       └── ui_parser.rs # uiautomator XML parsing
 │   └── automotion-cli/     # Desktop CLI tool (ADB commands)
@@ -51,6 +52,25 @@ automotion/
         ├── AutomationService.kt      # AccessibilityService for UI automation
         └── RenderForegroundService.kt # Foreground service for background work
 ```
+
+## Fix Tool
+
+When sharing `.amproj` files between devices, embedded resources may fail to load due to a bug in Alemon's import URI remapping (particularly with non-ASCII filenames).
+
+The `fix` command rewrites resource URIs from `amproj:filename` to `am:SHA1.ext`, which is the internal format Alemon uses after import. This bypasses the buggy remapping step while keeping all resources embedded in the ZIP.
+
+```bash
+# Fix a single file
+automotion fix run my_project.amproj
+
+# Fix all amproj files in input_projects/
+automotion fix run
+
+# Specify output directory
+automotion fix run my_project.amproj -o ./fixed_output
+```
+
+The fixed file is saved as `{title}_fixed.amproj` in the output directory.
 
 ## Android App
 

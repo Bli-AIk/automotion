@@ -54,24 +54,13 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum FixAction {
-    /// 提取嵌入资源到本地目录（不修改 amproj）
-    Restore {
-        /// amproj 文件路径
-        file: String,
+    /// 修复 amproj 资源路径（amproj: → am:SHA1.ext）
+    Run {
+        /// amproj 文件路径（默认处理 input_projects/ 下所有 amproj）
+        file: Option<String>,
         /// 输出目录
         #[arg(short, long, default_value = "./fix_output")]
         output: String,
-    },
-    /// 提取资源 + 修改 amproj URI 指向设备目录
-    Unify {
-        /// amproj 文件路径
-        file: String,
-        /// 输出目录
-        #[arg(short, long, default_value = "./fix_output")]
-        output: String,
-        /// 设备端目标目录
-        #[arg(short, long, default_value = "/sdcard/Download/automotion_assets")]
-        target_dir: String,
     },
 }
 
@@ -210,59 +199,56 @@ fn run_fix(action: FixAction) {
     println!();
 
     match action {
-        FixAction::Restore { file, output } => {
-            let input_path = PathBuf::from(&file);
-            if !input_path.exists() {
-                logger::error(&format!("文件不存在: {file}"));
-                std::process::exit(1);
-            }
-
+        FixAction::Run { file, output } => {
             let output_path = PathBuf::from(&output);
-            match fix::fix_amproj(&input_path, &output_path, fix::FixMode::Restore, None) {
-                Ok(result) => {
-                    logger::step(&format!(
-                        "修补完成: 提取了 {} 个资源文件",
-                        result.extracted_files.len()
-                    ));
-                }
-                Err(e) => {
-                    logger::error(&format!("修补失败: {e}"));
+
+            // 收集要处理的文件
+            let files: Vec<PathBuf> = if let Some(f) = file {
+                let p = PathBuf::from(&f);
+                if !p.exists() {
+                    logger::error(&format!("文件不存在: {f}"));
                     std::process::exit(1);
                 }
-            }
-        }
-        FixAction::Unify {
-            file,
-            output,
-            target_dir,
-        } => {
-            let input_path = PathBuf::from(&file);
-            if !input_path.exists() {
-                logger::error(&format!("文件不存在: {file}"));
-                std::process::exit(1);
-            }
-
-            let output_path = PathBuf::from(&output);
-            match fix::fix_amproj(
-                &input_path,
-                &output_path,
-                fix::FixMode::Unify,
-                Some(&target_dir),
-            ) {
-                Ok(result) => {
-                    logger::step(&format!(
-                        "修补完成: 提取了 {} 个资源文件",
-                        result.extracted_files.len()
-                    ));
-                    if let Some(amproj) = result.output_amproj {
-                        logger::step(&format!("修复后 amproj: {}", amproj.display()));
+                vec![p]
+            } else {
+                // 处理 input_projects/ 下所有 amproj
+                let input_dir = PathBuf::from("./input_projects");
+                if !input_dir.exists() {
+                    logger::error("input_projects/ 目录不存在");
+                    std::process::exit(1);
+                }
+                let mut found = Vec::new();
+                if let Ok(entries) = fs::read_dir(&input_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map_or(false, |e| e == "amproj") {
+                            found.push(path);
+                        }
                     }
                 }
-                Err(e) => {
-                    logger::error(&format!("修补失败: {e}"));
+                if found.is_empty() {
+                    logger::error("input_projects/ 中没有 amproj 文件");
                     std::process::exit(1);
                 }
+                found
+            };
+
+            for input_path in &files {
+                match fix::fix_amproj(input_path, &output_path) {
+                    Ok(result) => {
+                        logger::step(&format!(
+                            "修复完成: {}",
+                            result.output_amproj.display()
+                        ));
+                    }
+                    Err(e) => {
+                        logger::error(&format!("修补失败: {e}"));
+                        std::process::exit(1);
+                    }
+                }
             }
+
+            logger::step(&format!("共修复 {} 个文件", files.len()));
         }
     }
 }
