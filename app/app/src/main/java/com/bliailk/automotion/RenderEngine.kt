@@ -138,8 +138,9 @@ class RenderEngine(private val context: Context) {
             }
             Pair(type, info.title)
         } catch (e: Exception) {
-            AppLog.log(TAG, "⚠️ amproj 分析失败: ${e.message}，使用文件名作为标题")
-            Pair("project", filename.removeSuffix(".amproj"))
+            AppLog.log(TAG, "⚠️ amproj 分析失败: ${e.message}，跳过此文件")
+            downloadFile.delete()
+            throw RuntimeException("文件损坏或格式无效: ${e.message}")
         }
         AppLog.log(TAG, "工程类型: $projType, 标题: \"$projTitle\"")
 
