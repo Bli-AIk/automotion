@@ -16,6 +16,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -67,6 +68,19 @@ fun MainScreen() {
     var isServiceEnabled by remember { mutableStateOf(false) }
     var selectedFiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var isRunning by remember { mutableStateOf(false) }
+    var showLog by remember { mutableStateOf(false) }
+
+    // 日志收集
+    val logLines = remember { mutableStateListOf<String>() }
+    LaunchedEffect(Unit) {
+        // 加载已有日志
+        logLines.addAll(AppLog.logs)
+        // 监听新日志
+        AppLog.flow.collect { line ->
+            logLines.add(line)
+            if (logLines.size > 500) logLines.removeAt(0)
+        }
+    }
 
     // 每次 onResume 时刷新无障碍状态 + 定时轮询
     DisposableEffect(lifecycleOwner) {
@@ -117,7 +131,7 @@ fun MainScreen() {
                 style = MaterialTheme.typography.bodyLarge
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // 无障碍服务状态
             if (!isServiceEnabled) {
@@ -162,7 +176,7 @@ fun MainScreen() {
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // 文件选择
             Button(
@@ -175,63 +189,125 @@ fun MainScreen() {
                 Text("选择 amproj 文件")
             }
 
-            // 已选文件列表
-            if (selectedFiles.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    "已选择 ${selectedFiles.size} 个文件：",
-                    style = MaterialTheme.typography.titleSmall
-                )
-                LazyColumn(
+            // 中间区域：文件列表 或 日志
+            if (showLog) {
+                // 日志视图
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("📋 运行日志", style = MaterialTheme.typography.titleSmall)
+                    Row {
+                        TextButton(onClick = {
+                            AppLog.clear()
+                            logLines.clear()
+                        }) { Text("清空") }
+                        TextButton(onClick = { showLog = false }) { Text("返回") }
+                    }
+                }
+                Card(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp)
+                        .fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
                 ) {
-                    items(selectedFiles) { uri ->
-                        val name = getFilenameFromUri(context, uri) ?: "未知文件"
-                        Text(
-                            "  • $name",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(vertical = 2.dp)
-                        )
+                    val listState = rememberLazyListState()
+                    // 新日志自动滚动到底部
+                    LaunchedEffect(logLines.size) {
+                        if (logLines.isNotEmpty()) {
+                            listState.animateScrollToItem(logLines.size - 1)
+                        }
+                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.padding(8.dp)
+                    ) {
+                        items(logLines.size) { i ->
+                            Text(
+                                logLines[i],
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(vertical = 1.dp)
+                            )
+                        }
                     }
                 }
             } else {
-                Spacer(modifier = Modifier.weight(1f))
+                // 文件列表视图
+                if (selectedFiles.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "已选择 ${selectedFiles.size} 个文件：",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                    ) {
+                        items(selectedFiles) { uri ->
+                            val name = getFilenameFromUri(context, uri) ?: "未知文件"
+                            Text(
+                                "  • $name",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(vertical = 2.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
             }
 
-            // 开始/停止按钮
-            if (selectedFiles.isNotEmpty()) {
-                Button(
-                    onClick = {
-                        if (!isRunning) {
-                            try {
-                                isRunning = true
-                                val intent = Intent(context, RenderForegroundService::class.java).apply {
-                                    putParcelableArrayListExtra("file_uris", ArrayList(selectedFiles))
+            // 底部按钮区域
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // 开始/停止按钮
+                if (selectedFiles.isNotEmpty()) {
+                    Button(
+                        onClick = {
+                            if (!isRunning) {
+                                try {
+                                    isRunning = true
+                                    showLog = true  // 自动切到日志视图
+                                    AppLog.log("UI", "开始渲染 ${selectedFiles.size} 个文件")
+                                    val intent = Intent(context, RenderForegroundService::class.java).apply {
+                                        putParcelableArrayListExtra("file_uris", ArrayList(selectedFiles))
+                                    }
+                                    context.startForegroundService(intent)
+                                    Toast.makeText(context, "渲染服务已启动", Toast.LENGTH_SHORT).show()
+                                } catch (e: Exception) {
+                                    isRunning = false
+                                    AppLog.log("UI", "❌ 启动失败: ${e.message}")
+                                    Toast.makeText(context, "启动失败: ${e.message}", Toast.LENGTH_LONG).show()
                                 }
-                                context.startForegroundService(intent)
-                                Toast.makeText(context, "渲染服务已启动", Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) {
+                            } else {
                                 isRunning = false
-                                Toast.makeText(context, "启动失败: ${e.message}", Toast.LENGTH_LONG).show()
+                                context.stopService(Intent(context, RenderForegroundService::class.java))
+                                AppLog.log("UI", "用户停止渲染")
+                                Toast.makeText(context, "渲染已停止", Toast.LENGTH_SHORT).show()
                             }
+                        },
+                        enabled = isServiceEnabled,
+                        colors = if (isRunning) {
+                            ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                         } else {
-                            isRunning = false
-                            context.stopService(Intent(context, RenderForegroundService::class.java))
-                            Toast.makeText(context, "渲染已停止", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    enabled = isServiceEnabled,
-                    colors = if (isRunning) {
-                        ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    } else {
-                        ButtonDefaults.buttonColors()
-                    },
+                            ButtonDefaults.buttonColors()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (isRunning) "停止渲染" else "开始批量渲染")
+                    }
+                }
+
+                // 查看日志按钮
+                TextButton(
+                    onClick = { showLog = !showLog },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (isRunning) "停止渲染" else "开始批量渲染")
+                    Text(if (showLog) "隐藏日志" else "查看日志")
                 }
             }
         }

@@ -34,6 +34,7 @@ class AutomationService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         Log.i(TAG, "AutomationService 已连接")
+        AppLog.log(TAG, "无障碍服务已连接")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -51,6 +52,7 @@ class AutomationService : AccessibilityService() {
 
     override fun onDestroy() {
         instance = null
+        AppLog.log(TAG, "无障碍服务已断开")
         super.onDestroy()
     }
 

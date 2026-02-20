@@ -64,6 +64,7 @@ class RenderEngine(private val context: Context) {
 
             val filename = getFilenameFromUri(uri) ?: "unknown_${index}.amproj"
             onProgress?.invoke(index + 1, total, "处理中: $filename")
+            AppLog.log(TAG, "▶ 开始处理 [${ index + 1 }/$total]: $filename")
 
             try {
                 processSingleProject(uri, filename)
@@ -71,6 +72,7 @@ class RenderEngine(private val context: Context) {
             } catch (e: Exception) {
                 failed++
                 Log.e(TAG, "工程处理失败: $filename", e)
+                AppLog.log(TAG, "❌ $filename 失败: ${e.message}")
                 onProgress?.invoke(index + 1, total, "❌ $filename: ${e.message}")
                 // 出错后强制停止 Alemon，确保不影响下一个
                 forceStopAlemon()
@@ -89,14 +91,17 @@ class RenderEngine(private val context: Context) {
 
         // 阶段 1-2: 复制文件到 Download 并触发导入
         Log.i(TAG, "[1/9] 复制文件到 Download: $filename")
+        AppLog.log(TAG, "[1/9] 复制文件: $filename")
         val downloadFile = copyToDownload(uri, filename)
 
         Log.i(TAG, "[2/9] 触发 Alemon 导入")
+        AppLog.log(TAG, "[2/9] 触发 Alemon 导入")
         launchAlemonWithFile(downloadFile)
         delay(1000)
 
         // 阶段 3: 等待"导入"按钮并点击
         Log.i(TAG, "[3/9] 确认导入对话框")
+        AppLog.log(TAG, "[3/9] 确认导入对话框")
         if (!waitAndTapText(service, "导入", UI_WAIT_TIMEOUT_MS)) {
             // 重试：强制停止后重新打开
             Log.w(TAG, "导入对话框未出现，重试中...")
@@ -114,6 +119,7 @@ class RenderEngine(private val context: Context) {
 
         // 阶段 4: 等待"完成"按钮
         Log.i(TAG, "[4/9] 等待导入完成")
+        AppLog.log(TAG, "[4/9] 等待导入完成")
         if (!waitAndTapText(service, "完成", UI_WAIT_TIMEOUT_MS)) {
             Log.w(TAG, "未找到完成按钮，尝试关闭弹窗...")
             service.dismissPopups()
@@ -122,6 +128,7 @@ class RenderEngine(private val context: Context) {
 
         // 阶段 5: 启动 Alemon 主界面并导航到项目标签
         Log.i(TAG, "[5/9] 打开 Alemon 并导航到项目标签页")
+        AppLog.log(TAG, "[5/9] 导航到项目标签页")
         launchAlemonMain()
         delay(500)
 
@@ -138,6 +145,7 @@ class RenderEngine(private val context: Context) {
 
         // 阶段 6: 在列表中找到并打开工程
         Log.i(TAG, "[6/9] 打开导入的工程")
+        AppLog.log(TAG, "[6/9] 打开导入的工程")
         // 从 Rust 核心库获取 amproj 标题（通过 UniFFI）
         val projTitle = try {
             val info = uniffi.automotion_core.analyzeAmproj(downloadFile.absolutePath)
@@ -154,6 +162,7 @@ class RenderEngine(private val context: Context) {
 
         // 阶段 7: 等待 share 按钮（处理弹窗）→ 打开导出菜单 → 点击 exportButton
         Log.i(TAG, "[7/9] 打开导出菜单并开始渲染")
+        AppLog.log(TAG, "[7/9] 打开导出菜单")
 
         val shareDeadline = System.currentTimeMillis() + SHARE_WAIT_TIMEOUT_MS
         var foundShare = false
@@ -189,6 +198,7 @@ class RenderEngine(private val context: Context) {
 
         // 阶段 8: 等待渲染完成（saveButton 出现 = 渲染完成）
         Log.i(TAG, "[8/9] 等待渲染完成")
+        AppLog.log(TAG, "[8/9] 渲染中...")
         val renderDeadline = System.currentTimeMillis() + MAX_RENDER_WAIT_MS
         var foundSave = false
 
@@ -217,10 +227,12 @@ class RenderEngine(private val context: Context) {
 
         // 阶段 9: 清理
         Log.i(TAG, "[9/9] 清理")
+        AppLog.log(TAG, "[9/9] 清理")
         forceStopAlemon()
         downloadFile.delete()
 
         Log.i(TAG, "工程 [$filename] 处理完成 ✓")
+        AppLog.log(TAG, "✅ $filename 处理完成")
     }
 
     // ── 辅助方法 ──────────────────────────────────────────────────────────

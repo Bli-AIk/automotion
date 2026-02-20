@@ -37,6 +37,7 @@ class RenderForegroundService : Service() {
         super.onCreate()
         createNotificationChannel()
         isRunning = true
+        AppLog.log(TAG, "渲染服务已启动")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -57,9 +58,11 @@ class RenderForegroundService : Service() {
         engine = RenderEngine(applicationContext).apply {
             onProgress = { current, total, message ->
                 updateNotification(message, current, total)
+                AppLog.log(TAG, "[$current/$total] $message")
                 Log.i(TAG, "[$current/$total] $message")
             }
             onComplete = { success, failed ->
+                AppLog.log(TAG, "批量渲染完成: 成功=$success, 失败=$failed")
                 Log.i(TAG, "批量渲染完成: 成功=$success, 失败=$failed")
                 updateNotification("完成: 成功 $success / 失败 $failed", success + failed, success + failed)
                 scope.launch {
@@ -74,6 +77,7 @@ class RenderForegroundService : Service() {
                 engine?.batchRender(uris)
             } catch (e: Exception) {
                 Log.e(TAG, "批量渲染异常", e)
+                AppLog.log(TAG, "❌ 批量渲染异常: ${e.message}")
                 updateNotification("错误: ${e.message}", 0, 0)
                 delay(3000)
                 stopSelf()
