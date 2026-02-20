@@ -1,0 +1,14 @@
+# Gradle
+.gradle/
+build/
+local.properties
+
+# Android Studio
+.idea/
+*.iml
+
+# Compiled .so (由 build-rust.sh 生成)
+app/src/main/jniLibs/
+
+# UniFFI 生成的 Kotlin 绑定
+app/src/main/java/uniffi/

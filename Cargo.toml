@@ -1,12 +1,3 @@
-[package]
-name = "automotion"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-regex = "1"
-ctrlc = "3"
-chrono = "0.4"
-zip = "2"
-clap = { version = "4", features = ["derive"] }
-roxmltree = "0.20"
+[workspace]
+members = ["crates/automotion-core", "crates/automotion-cli"]
+resolver = "3"

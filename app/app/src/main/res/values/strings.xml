@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Automotion</string>
+    <string name="accessibility_description">Automotion 自动化服务：自动操控 Alemon 完成 amproj 批量导出渲染。\n\n此服务仅在 Alemon (com.taffy.alemon) 运行时工作，不会读取其他应用数据。</string>
+    <string name="btn_start">开始批量渲染</string>
+    <string name="btn_stop">停止</string>
+    <string name="btn_select_files">选择 amproj 文件</string>
+    <string name="status_idle">就绪</string>
+    <string name="status_running">渲染中…</string>
+    <string name="status_done">完成</string>
+    <string name="accessibility_not_enabled">请先开启无障碍服务</string>
+</resources>
