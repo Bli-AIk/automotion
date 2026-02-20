@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
-use automotion_core::{amproj, config, logger, split};
+use automotion_core::{amproj, config, fix, logger, split};
 
 #[derive(Parser)]
 #[command(name = "automotion", about = "Alemon 批量渲染自动化工具")]
@@ -45,6 +45,34 @@ enum Commands {
         #[arg(short, long, default_value = "./output_videos")]
         output: String,
     },
+    /// 修补 amproj 资源路径
+    Fix {
+        #[command(subcommand)]
+        action: FixAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum FixAction {
+    /// 提取嵌入资源到本地目录（不修改 amproj）
+    Restore {
+        /// amproj 文件路径
+        file: String,
+        /// 输出目录
+        #[arg(short, long, default_value = "./fix_output")]
+        output: String,
+    },
+    /// 提取资源 + 修改 amproj URI 指向设备目录
+    Unify {
+        /// amproj 文件路径
+        file: String,
+        /// 输出目录
+        #[arg(short, long, default_value = "./fix_output")]
+        output: String,
+        /// 设备端目标目录
+        #[arg(short, long, default_value = "/sdcard/Download/automotion_assets")]
+        target_dir: String,
+    },
 }
 
 fn main() {
@@ -67,6 +95,9 @@ fn main() {
         }
         Some(Commands::SplitRender { file, output }) => {
             run_split_render(&file, &output);
+        }
+        Some(Commands::Fix { action }) => {
+            run_fix(action);
         }
     }
 }
@@ -169,6 +200,71 @@ fn run_split_render(file: &str, output_dir: &str) {
     }
 
     restore_and_exit(0);
+}
+
+/// fix: 修补 amproj 资源路径
+fn run_fix(action: FixAction) {
+    println!("============================================");
+    println!("  automotion — amproj 资源路径修补");
+    println!("============================================");
+    println!();
+
+    match action {
+        FixAction::Restore { file, output } => {
+            let input_path = PathBuf::from(&file);
+            if !input_path.exists() {
+                logger::error(&format!("文件不存在: {file}"));
+                std::process::exit(1);
+            }
+
+            let output_path = PathBuf::from(&output);
+            match fix::fix_amproj(&input_path, &output_path, fix::FixMode::Restore, None) {
+                Ok(result) => {
+                    logger::step(&format!(
+                        "修补完成: 提取了 {} 个资源文件",
+                        result.extracted_files.len()
+                    ));
+                }
+                Err(e) => {
+                    logger::error(&format!("修补失败: {e}"));
+                    std::process::exit(1);
+                }
+            }
+        }
+        FixAction::Unify {
+            file,
+            output,
+            target_dir,
+        } => {
+            let input_path = PathBuf::from(&file);
+            if !input_path.exists() {
+                logger::error(&format!("文件不存在: {file}"));
+                std::process::exit(1);
+            }
+
+            let output_path = PathBuf::from(&output);
+            match fix::fix_amproj(
+                &input_path,
+                &output_path,
+                fix::FixMode::Unify,
+                Some(&target_dir),
+            ) {
+                Ok(result) => {
+                    logger::step(&format!(
+                        "修补完成: 提取了 {} 个资源文件",
+                        result.extracted_files.len()
+                    ));
+                    if let Some(amproj) = result.output_amproj {
+                        logger::step(&format!("修复后 amproj: {}", amproj.display()));
+                    }
+                }
+                Err(e) => {
+                    logger::error(&format!("修补失败: {e}"));
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
 }
 
 // =============================================================================
