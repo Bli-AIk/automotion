@@ -59,22 +59,41 @@ class AutomationService : AccessibilityService() {
     // ── 节点查找 ──────────────────────────────────────────────────────────
 
     /**
-     * 在当前窗口中查找包含指定文本的节点
+     * 在所有窗口中查找包含指定文本的节点（不只是活动窗口）
      */
     fun findNodeByText(text: String): AccessibilityNodeInfo? {
-        val root = rootInActiveWindow ?: return null
-        val nodes = root.findAccessibilityNodeInfosByText(text)
-        return nodes?.firstOrNull { it.isClickable }
-            ?: nodes?.firstOrNull()
+        // 先搜活动窗口
+        rootInActiveWindow?.let { root ->
+            val nodes = root.findAccessibilityNodeInfosByText(text)
+            val result = nodes?.firstOrNull { it.isClickable } ?: nodes?.firstOrNull()
+            if (result != null) return result
+        }
+        // 再搜所有窗口
+        for (window in windows) {
+            val root = window.root ?: continue
+            val nodes = root.findAccessibilityNodeInfosByText(text)
+            val result = nodes?.firstOrNull { it.isClickable } ?: nodes?.firstOrNull()
+            if (result != null) return result
+        }
+        return null
     }
 
     /**
-     * 在当前窗口中通过 resource-id 查找节点
+     * 在所有窗口中通过 resource-id 查找节点
      */
     fun findNodeById(resourceId: String): AccessibilityNodeInfo? {
-        val root = rootInActiveWindow ?: return null
-        val nodes = root.findAccessibilityNodeInfosByViewId(resourceId)
-        return nodes?.firstOrNull()
+        // 先搜活动窗口
+        rootInActiveWindow?.let { root ->
+            val nodes = root.findAccessibilityNodeInfosByViewId(resourceId)
+            if (!nodes.isNullOrEmpty()) return nodes.first()
+        }
+        // 再搜所有窗口
+        for (window in windows) {
+            val root = window.root ?: continue
+            val nodes = root.findAccessibilityNodeInfosByViewId(resourceId)
+            if (!nodes.isNullOrEmpty()) return nodes.first()
+        }
+        return null
     }
 
     // ── 点击操作 ──────────────────────────────────────────────────────────

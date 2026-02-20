@@ -309,30 +309,16 @@ class RenderEngine(private val context: Context) {
     }
 
     private fun launchAlemonWithFile(file: File) {
-        // 使用 am start 命令（类似 CLI，绕过 Android 12+ 后台 Activity 启动限制）
-        try {
-            val proc = Runtime.getRuntime().exec(arrayOf(
-                "am", "start",
-                "--activity-new-task", "--activity-clear-task",
-                "-a", "android.intent.action.VIEW",
-                "-d", "file://${file.absolutePath}",
-                "-t", "application/zip",
-                "-p", ALEMON_PACKAGE
-            ))
-            proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
-        } catch (e: Exception) {
-            Log.w(TAG, "am start 失败，回退到 startActivity: ${e.message}")
-            val uri = androidx.core.content.FileProvider.getUriForFile(
-                context, "${context.packageName}.fileprovider", file
-            )
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/zip")
-                setPackage(ALEMON_PACKAGE)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            context.startActivity(intent)
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", file
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/zip")
+            setPackage(ALEMON_PACKAGE)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+        context.startActivity(intent)
     }
 
     private fun launchAlemonMain() {
@@ -344,17 +330,27 @@ class RenderEngine(private val context: Context) {
 
     private fun forceStopAlemon() {
         try {
-            // 直接 am force-stop（不按 HOME，避免触发后台 Activity 启动限制）
+            // 按 BACK 多次从 Alemon 回到我们的 Activity（保持前台，避免后台启动限制）
+            val service = AutomationService.instance
+            if (service != null) {
+                for (i in 0 until 5) {
+                    service.performGlobalAction(
+                        android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK
+                    )
+                    Thread.sleep(300)
+                }
+            }
+
+            // am force-stop 杀掉 Alemon
             try {
                 val proc = Runtime.getRuntime().exec(arrayOf("am", "force-stop", ALEMON_PACKAGE))
                 proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
             } catch (_: Exception) {}
 
-            // 补充：killBackgroundProcesses
             val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
             am.killBackgroundProcesses(ALEMON_PACKAGE)
 
-            Thread.sleep(1000)
+            Thread.sleep(500)
             AppLog.log(TAG, "已清理 Alemon 进程")
         } catch (e: Exception) {
             Log.w(TAG, "退出 Alemon 失败: ${e.message}")
