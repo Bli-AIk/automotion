@@ -152,11 +152,10 @@ class RenderEngine(private val context: Context) {
         Log.i(TAG, "[3/9] 确认导入对话框")
         AppLog.log(TAG, "[3/9] 确认导入对话框")
         if (!waitAndTapText(service, "导入", UI_WAIT_TIMEOUT_MS)) {
-            // 重试：强制停止 → 回到 Automotion 前台 → 重新打开
+            // 重试：回到 Automotion 前台 → 重新打开
             Log.w(TAG, "导入对话框未出现，重试中...")
             AppLog.log(TAG, "⚠️ 导入对话框未出现，重试...")
-            forceStopAlemon()
-            bringOurActivityToFront(service)
+            navigateBackToOurActivity(service)
             delay(1000)
             launchAlemonWithFile(downloadFile)
             delay(5000)
@@ -287,10 +286,13 @@ class RenderEngine(private val context: Context) {
         // 阶段 9: 清理
         Log.i(TAG, "[9/9] 清理")
         AppLog.log(TAG, "[9/9] 清理")
-        forceStopAlemon()
         downloadFile.delete()
-        // 回到 automotion 前台，确保下一轮 startActivity 不受后台限制
-        bringOurActivityToFront(service)
+        // 按 BACK 自然关闭 Alemon（不 force-stop）→ Android 恢复我们的 Activity
+        if (!navigateBackToOurActivity(service)) {
+            // 降级：force-stop + 重试
+            AppLog.log(TAG, "⚠️ BACK 未回到 Automotion，尝试 force-stop")
+            forceStopAlemon()
+        }
 
         Log.i(TAG, "工程 [$filename] 处理完成 ✓")
         AppLog.log(TAG, "✅ $filename 处理完成")
@@ -332,30 +334,24 @@ class RenderEngine(private val context: Context) {
     }
 
     /**
-     * 通过「最近任务」找到并点击 Automotion，将我们的 Activity 拉回前台。
-     * 这确保后续 startActivity 不受 Android 12+ 后台启动限制。
+     * 按 BACK 自然关闭 Alemon 的 Activity 栈，直到我们的 Activity 恢复到前台。
+     * 不用 force-stop：任务自然结束时 Android 会恢复上一个任务。
      */
-    private suspend fun bringOurActivityToFront(service: AutomationService) {
-        // 打开最近任务
-        service.performGlobalAction(
-            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS
-        )
-        delay(1000)
-
-        // 在最近任务中找到 Automotion 并点击
-        val appNode = service.findNodeByText("Automotion")
-        if (appNode != null) {
-            service.clickNode(appNode)
-            delay(1000)
-            AppLog.log(TAG, "已从最近任务切回 Automotion")
-        } else {
-            // 降级：按 HOME 后尝试直接 startActivity（可能被拦截）
-            AppLog.log(TAG, "⚠️ 未在最近任务中找到 Automotion")
+    private suspend fun navigateBackToOurActivity(service: AutomationService): Boolean {
+        for (i in 0 until 15) {
+            // 检查当前前台是否是我们的 Activity
+            val root = service.rootInActiveWindow
+            val pkg = root?.packageName?.toString()
+            if (pkg == context.packageName) {
+                AppLog.log(TAG, "已回到 Automotion 界面")
+                return true
+            }
             service.performGlobalAction(
-                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
+                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK
             )
             delay(500)
         }
+        return false
     }
 
     private fun forceStopAlemon() {
