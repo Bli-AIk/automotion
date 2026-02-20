@@ -17,7 +17,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,13 +49,28 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen() {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var isServiceEnabled by remember { mutableStateOf(false) }
     var selectedFiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var isRunning by remember { mutableStateOf(false) }
 
-    // 检测无障碍服务状态
+    // 每次 onResume 时刷新无障碍状态 + 定时轮询
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isServiceEnabled = isAccessibilityServiceEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // 补充定时轮询（每 2 秒），处理后台切换等边缘情况
     LaunchedEffect(Unit) {
-        isServiceEnabled = isAccessibilityServiceEnabled(context)
+        while (true) {
+            isServiceEnabled = isAccessibilityServiceEnabled(context)
+            delay(2000)
+        }
     }
 
     // 文件选择器
@@ -99,6 +118,12 @@ fun MainScreen() {
                             "⚠️ 请先开启无障碍服务",
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "提示：清除后台可能导致系统关闭无障碍权限。请在设置中锁定此应用的后台运行。",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(onClick = {
