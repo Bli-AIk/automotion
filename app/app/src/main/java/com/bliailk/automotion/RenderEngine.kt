@@ -146,7 +146,7 @@ class RenderEngine(private val context: Context) {
         Log.i(TAG, "[2/9] 触发 Alemon 导入")
         AppLog.log(TAG, "[2/9] 触发 Alemon 导入")
         launchAlemonWithFile(downloadFile)
-        delay(1000)
+        delay(3000) // CLEAR_TASK 导致冷启动，需要更长加载时间
 
         // 阶段 3: 等待"导入"按钮并点击
         Log.i(TAG, "[3/9] 确认导入对话框")
@@ -158,7 +158,7 @@ class RenderEngine(private val context: Context) {
             forceStopAlemon()
             delay(2000)
             launchAlemonWithFile(downloadFile)
-            delay(1000)
+            delay(3000)
             if (!waitAndTapText(service, "导入", 15_000L)) {
                 forceStopAlemon()
                 downloadFile.delete()
@@ -317,7 +317,7 @@ class RenderEngine(private val context: Context) {
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/zip")
             setPackage(ALEMON_PACKAGE)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(intent)
@@ -335,18 +335,19 @@ class RenderEngine(private val context: Context) {
             // 先回到桌面，让 Alemon 进入后台
             val service = AutomationService.instance
             service?.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
-            Thread.sleep(500)
+            Thread.sleep(1000)
 
             // 使用 ActivityManager 杀后台进程
             val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
             am.killBackgroundProcesses(ALEMON_PACKAGE)
 
-            // 同时尝试 Runtime.exec（部分设备支持）
+            // 同时尝试 Runtime.exec（等待完成）
             try {
-                Runtime.getRuntime().exec(arrayOf("am", "force-stop", ALEMON_PACKAGE))
+                val proc = Runtime.getRuntime().exec(arrayOf("am", "force-stop", ALEMON_PACKAGE))
+                proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
             } catch (_: Exception) {}
 
-            Thread.sleep(500)
+            Thread.sleep(1000)
             AppLog.log(TAG, "已清理 Alemon 进程")
         } catch (e: Exception) {
             Log.w(TAG, "退出 Alemon 失败: ${e.message}")
