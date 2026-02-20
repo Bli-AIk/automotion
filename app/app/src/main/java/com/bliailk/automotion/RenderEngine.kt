@@ -1,5 +1,7 @@
 package com.bliailk.automotion
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -146,7 +148,7 @@ class RenderEngine(private val context: Context) {
         Log.i(TAG, "[2/9] 触发 Alemon 导入")
         AppLog.log(TAG, "[2/9] 触发 Alemon 导入")
         launchAlemonWithFile(downloadFile)
-        delay(3000) // CLEAR_TASK 导致冷启动，需要更长加载时间
+        delay(5000) // AlarmManager 可能有少量延迟
 
         // 阶段 3: 等待"导入"按钮并点击
         Log.i(TAG, "[3/9] 确认导入对话框")
@@ -158,7 +160,7 @@ class RenderEngine(private val context: Context) {
             forceStopAlemon()
             delay(2000)
             launchAlemonWithFile(downloadFile)
-            delay(3000)
+            delay(5000)
             if (!waitAndTapText(service, "导入", 15_000L)) {
                 forceStopAlemon()
                 downloadFile.delete()
@@ -308,17 +310,33 @@ class RenderEngine(private val context: Context) {
         return target
     }
 
+    private var pendingIntentCounter = 0
+
     private fun launchAlemonWithFile(file: File) {
         val uri = androidx.core.content.FileProvider.getUriForFile(
             context, "${context.packageName}.fileprovider", file
         )
+        // 预先授予 URI 读取权限给 Alemon
+        context.grantUriPermission(ALEMON_PACKAGE, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/zip")
             setPackage(ALEMON_PACKAGE)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(intent)
+
+        // 使用 AlarmManager 发送 PendingIntent，由系统服务发起 Activity 启动
+        // 绕过 Android 12+ 后台 Activity 启动限制（sender 是 AlarmManager，非后台 app）
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            pendingIntentCounter++,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT
+        )
+
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmManager.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 50, pendingIntent)
     }
 
     private fun launchAlemonMain() {
