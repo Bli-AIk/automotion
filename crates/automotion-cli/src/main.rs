@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
-use automotion_core::{amproj, config, fix, logger, split};
+use automotion_core::{amproj, config, fix, group_split, logger, split};
 
 #[derive(Parser)]
 #[command(name = "automotion", about = "Alemon 批量渲染自动化工具")]
@@ -28,6 +28,9 @@ enum Commands {
         /// 输出目录
         #[arg(short, long, default_value = "./output_videos")]
         output: String,
+        /// 渲染前先修复资源路径
+        #[arg(long)]
+        fix: bool,
     },
     /// 拆分大型 amproj 为独立元素
     Split {
@@ -43,6 +46,31 @@ enum Commands {
         file: String,
         /// 视频输出目录
         #[arg(short, long, default_value = "./output_videos")]
+        output: String,
+        /// 渲染前先修复资源路径
+        #[arg(long)]
+        fix: bool,
+    },
+    /// 编组后按帧切分 amproj
+    GroupSplit {
+        /// 要处理的 amproj 文件路径
+        file: String,
+        /// 每段帧数
+        #[arg(short, long, default_value = "30")]
+        frames: u32,
+        /// 输出目录
+        #[arg(short, long, default_value = "./output_group_split")]
+        output: String,
+        /// 对输出文件执行 fix（修复资源路径，防止贴图丢失）
+        #[arg(long, default_value = "false")]
+        fix: bool,
+    },
+    /// 仅编组 amproj（不切分）
+    Group {
+        /// 要处理的 amproj 文件路径
+        file: String,
+        /// 输出目录
+        #[arg(short, long, default_value = "./output_group")]
         output: String,
     },
     /// 修补 amproj 资源路径
@@ -70,20 +98,32 @@ fn main() {
     match cli.command {
         None | Some(Commands::Render { .. }) => {
             // 默认模式 / render 子命令
-            let (input, output) = match cli.command {
-                Some(Commands::Render { input, output }) => (input, output),
+            let (input, output, do_fix) = match cli.command {
+                Some(Commands::Render { input, output, fix }) => (input, output, fix),
                 _ => (
                     "./input_projects".to_string(),
                     "./output_videos".to_string(),
+                    false,
                 ),
             };
-            run_render(&input, &output);
+            run_render(&input, &output, do_fix);
         }
         Some(Commands::Split { file, output }) => {
             run_split(&file, &output);
         }
-        Some(Commands::SplitRender { file, output }) => {
-            run_split_render(&file, &output);
+        Some(Commands::SplitRender { file, output, fix }) => {
+            run_split_render(&file, &output, fix);
+        }
+        Some(Commands::GroupSplit {
+            file,
+            frames,
+            output,
+            fix: do_fix,
+        }) => {
+            run_group_split(&file, &output, frames, do_fix);
+        }
+        Some(Commands::Group { file, output }) => {
+            run_group(&file, &output);
         }
         Some(Commands::Fix { action }) => {
             run_fix(action);
@@ -96,7 +136,7 @@ fn main() {
 // =============================================================================
 
 /// render: 批量渲染 input 目录中的 amproj 文件
-fn run_render(input_dir: &str, output_dir: &str) {
+fn run_render(input_dir: &str, output_dir: &str, do_fix: bool) {
     println!("============================================");
     println!("  automotion — Alemon 批量渲染自动化");
     println!("============================================");
@@ -104,18 +144,36 @@ fn run_render(input_dir: &str, output_dir: &str) {
 
     let running = setup_signal_handler();
 
+    // --fix: 先修复所有 amproj
+    let (projects, fix_dir) = if do_fix {
+        let fix_dir = PathBuf::from(".fix_tmp");
+        let _ = fs::remove_dir_all(&fix_dir);
+        let originals = collect_amproj_files(input_dir);
+        let fixed = fix_batch(&originals, &fix_dir);
+        (fixed, Some(fix_dir))
+    } else {
+        (collect_amproj_files(input_dir), None)
+    };
+
     if let Err(e) = init_environment(output_dir) {
         logger::error(&format!("环境初始化失败: {e}"));
         std::process::exit(1);
     }
 
-    let projects = collect_amproj_files(input_dir);
     if projects.is_empty() {
         logger::warn(&format!("在 {input_dir}/ 下未找到任何 .amproj 文件"));
         restore_and_exit(0);
     }
 
-    batch_render(&projects, output_dir, &running);
+    if do_fix {
+        batch_render_with_copy(&projects, output_dir, &running);
+    } else {
+        batch_render(&projects, output_dir, &running);
+    }
+
+    if let Some(dir) = fix_dir {
+        let _ = fs::remove_dir_all(&dir);
+    }
     restore_and_exit(0);
 }
 
@@ -145,7 +203,7 @@ fn run_split(file: &str, output_dir: &str) {
 }
 
 /// split-render: 先拆分再批量渲染
-fn run_split_render(file: &str, output_dir: &str) {
+fn run_split_render(file: &str, output_dir: &str, do_fix: bool) {
     println!("============================================");
     println!("  automotion — 拆分 + 批量渲染");
     println!("============================================");
@@ -157,9 +215,27 @@ fn run_split_render(file: &str, output_dir: &str) {
         std::process::exit(1);
     }
 
+    // --fix: 先修复原始文件
+    let (actual_input, fix_dir) = if do_fix {
+        let fix_dir = PathBuf::from(".fix_tmp");
+        let _ = fs::remove_dir_all(&fix_dir);
+        match fix::fix_amproj(&input_path, &fix_dir) {
+            Ok(result) => {
+                logger::step(&format!("修复完成: {}", result.output_amproj.display()));
+                (result.output_amproj, Some(fix_dir))
+            }
+            Err(e) => {
+                logger::error(&format!("修复失败: {e}"));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        (input_path, None)
+    };
+
     // 阶段 1: 拆分到临时目录
     let split_dir = PathBuf::from("./.automotion_split_tmp");
-    let split_outputs = match split::split_amproj(&input_path, &split_dir) {
+    let mut split_outputs = match split::split_amproj(&actual_input, &split_dir) {
         Ok(o) => o,
         Err(e) => {
             logger::error(&format!("拆分失败: {e}"));
@@ -172,6 +248,17 @@ fn run_split_render(file: &str, output_dir: &str) {
         std::process::exit(0);
     }
 
+    // --fix: 修复拆分后的每个元素
+    let fix_split_dir;
+    if do_fix {
+        fix_split_dir = PathBuf::from(".fix_split_tmp");
+        let _ = fs::remove_dir_all(&fix_split_dir);
+        split_outputs = fix_batch(&split_outputs, &fix_split_dir);
+        logger::step(&format!("已修复 {} 个拆分元素", split_outputs.len()));
+    } else {
+        fix_split_dir = PathBuf::new();
+    }
+
     // 阶段 2: 批量渲染
     let running = setup_signal_handler();
 
@@ -180,15 +267,145 @@ fn run_split_render(file: &str, output_dir: &str) {
         std::process::exit(1);
     }
 
-    batch_render(&split_outputs, output_dir, &running);
-
-    // 清理临时拆分目录
-    if split_dir.exists() {
-        let _ = fs::remove_dir_all(&split_dir);
-        logger::info("已清理临时拆分目录");
+    if do_fix {
+        batch_render_with_copy(&split_outputs, output_dir, &running);
+    } else {
+        batch_render(&split_outputs, output_dir, &running);
     }
 
+    // 清理临时目录
+    for dir in [&split_dir, &fix_split_dir] {
+        if dir.exists() {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+    if let Some(dir) = fix_dir {
+        if dir.exists() {
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+    logger::info("已清理临时目录");
+
     restore_and_exit(0);
+}
+
+/// group-split: 编组后按帧切分
+fn run_group_split(file: &str, output_dir: &str, frames: u32, do_fix: bool) {
+    println!("============================================");
+    println!("  automotion — amproj 编组+帧切分");
+    println!("============================================");
+    println!();
+
+    let input_path = PathBuf::from(file);
+    if !input_path.exists() {
+        logger::error(&format!("文件不存在: {file}"));
+        std::process::exit(1);
+    }
+
+    let output_path = PathBuf::from(output_dir);
+    match group_split::group_and_split(&input_path, &output_path, frames) {
+        Ok(outputs) => {
+            logger::step(&format!("编组+切分完成，共 {} 个片段", outputs.len()));
+
+            if do_fix {
+                logger::step("开始对输出文件执行 fix（资源路径修复）...");
+                let fix_output_dir = output_path.join("fixed");
+                std::fs::create_dir_all(&fix_output_dir).ok();
+                let mut fix_ok = 0;
+                let mut fix_err = 0;
+                // 使用临时目录避免同名覆盖，然后重命名为原始文件名
+                let tmp_dir = output_path.join("_fix_tmp");
+                for out_file in &outputs {
+                    let original_name = out_file
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    // 每次 fix 到独立临时目录，避免同名覆盖
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    std::fs::create_dir_all(&tmp_dir).ok();
+                    match fix::fix_amproj(out_file, &tmp_dir) {
+                        Ok(result) => {
+                            // 将 fix 输出重命名为原始文件名
+                            let final_path = fix_output_dir.join(&original_name);
+                            if let Err(e) =
+                                std::fs::rename(&result.output_amproj, &final_path)
+                            {
+                                logger::error(&format!(
+                                    "重命名失败: {} → {} — {}",
+                                    result.output_amproj.display(),
+                                    final_path.display(),
+                                    e
+                                ));
+                                fix_err += 1;
+                            } else {
+                                fix_ok += 1;
+                            }
+                        }
+                        Err(e) => {
+                            logger::error(&format!(
+                                "fix 失败: {} — {}",
+                                out_file.display(),
+                                e
+                            ));
+                            fix_err += 1;
+                        }
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&tmp_dir);
+                logger::step(&format!(
+                    "fix 完成: {fix_ok} 成功, {fix_err} 失败, 输出目录: {}",
+                    fix_output_dir.display()
+                ));
+            }
+        }
+        Err(e) => {
+            logger::error(&format!("编组+切分失败: {e}"));
+            std::process::exit(1);
+        }
+    }
+}
+
+/// group: 仅编组（不切分）
+fn run_group(file: &str, output_dir: &str) {
+    println!("============================================");
+    println!("  automotion — amproj 编组工具");
+    println!("============================================");
+    println!();
+
+    let input_path = PathBuf::from(file);
+    if !input_path.exists() {
+        logger::error(&format!("文件不存在: {file}"));
+        std::process::exit(1);
+    }
+
+    let output_path = PathBuf::from(output_dir);
+    match group_split::group_amproj(&input_path, &output_path) {
+        Ok(output) => {
+            logger::step(&format!("编组完成: {}", output.display()));
+        }
+        Err(e) => {
+            logger::error(&format!("编组失败: {e}"));
+            std::process::exit(1);
+        }
+    }
+}
+
+/// 批量修复 amproj 文件，返回修复后的文件列表
+fn fix_batch(files: &[PathBuf], output_dir: &PathBuf) -> Vec<PathBuf> {
+    let mut fixed = Vec::new();
+    for proj in files {
+        match fix::fix_amproj(proj, output_dir) {
+            Ok(result) => {
+                fixed.push(result.output_amproj);
+            }
+            Err(e) => {
+                logger::error(&format!("修复失败: {} — {e}", proj.display()));
+                std::process::exit(1);
+            }
+        }
+    }
+    fixed
 }
 
 /// fix: 修补 amproj 资源路径
@@ -317,6 +534,64 @@ fn batch_render(projects: &[PathBuf], output_dir: &str, running: &Arc<AtomicBool
 
         match process_single_project(proj_path, output_dir) {
             Ok(()) => success += 1,
+            Err(e) => {
+                failed += 1;
+                logger::error(&format!("工程处理失败: {e}，继续下一个..."));
+            }
+        }
+    }
+
+    println!();
+    logger::step("==========================================");
+    logger::step("全部处理完成");
+    logger::step(&format!("  成功: {success}/{total}"));
+    logger::step(&format!("  失败: {failed}/{total}"));
+    logger::step(&format!("  输出目录: {output_dir}/"));
+    logger::step("==========================================");
+}
+
+/// 渲染后同时将 amproj 复制到输出目录，文件名统一使用内部标题
+fn batch_render_with_copy(projects: &[PathBuf], output_dir: &str, running: &Arc<AtomicBool>) {
+    let total = projects.len();
+    logger::info(&format!("共发现 {total} 个工程文件待处理"));
+    println!();
+
+    let mut success = 0u32;
+    let mut failed = 0u32;
+
+    for (i, proj_path) in projects.iter().enumerate() {
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+
+        let idx = i + 1;
+        logger::info(&format!("========== 进度: [{idx}/{total}] =========="));
+
+        // 获取内部标题作为统一文件名
+        let title = match amproj::analyze(proj_path) {
+            Ok((_type, title)) => title,
+            Err(e) => {
+                failed += 1;
+                logger::error(&format!("分析失败: {e}，继续下一个..."));
+                continue;
+            }
+        };
+
+        match process_single_project(proj_path, output_dir) {
+            Ok(()) => {
+                // 渲染成功后：重命名 mp4 + 复制 amproj，统一使用内部标题
+                let proj_name = proj_path.file_stem().unwrap().to_string_lossy();
+                let old_mp4 = format!("{}/{}.mp4", output_dir, proj_name);
+                let new_mp4 = format!("{}/{}.mp4", output_dir, title);
+                let new_amproj = format!("{}/{}.amproj", output_dir, title);
+
+                if old_mp4 != new_mp4 && PathBuf::from(&old_mp4).exists() {
+                    let _ = fs::rename(&old_mp4, &new_mp4);
+                }
+                let _ = fs::copy(proj_path, &new_amproj);
+                logger::info(&format!("输出: {title}.mp4 + {title}.amproj"));
+                success += 1;
+            }
             Err(e) => {
                 failed += 1;
                 logger::error(&format!("工程处理失败: {e}，继续下一个..."));

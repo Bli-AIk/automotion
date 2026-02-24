@@ -27,6 +27,8 @@ Both share the same Rust core library (`automotion-core`) via [UniFFI](https://m
 * **Batch render** — Automatically process multiple `.amproj` files and export them as MP4 videos
 * **Split** — Split a large `.amproj` project into individual element files
 * **Split-render** — Split a project and then batch-render each element as a separate video
+* **Group & Split** — Group all elements into a single embedScene, then split by frame intervals for time-based batch rendering
+* **Fix** — Repair resource URIs (`amproj:` → `am:SHA1.ext`) to prevent texture/media loss across devices
 * **Dynamic UI interaction** — Finds UI elements by `resource-id` and `text` (no hardcoded coordinates)
 * **Render state detection** — Monitors output file stability to detect render completion
 * **Popup handling** — Automatically dismisses common popups (missing fonts, missing media, ad prompts)
@@ -41,6 +43,7 @@ automotion/
 │   │   └── src/
 │   │       ├── amproj.rs   # .amproj analysis (ZIP/XML parsing)
 │   │       ├── split.rs    # Project splitting logic
+│   │       ├── group_split.rs # Group + time-based splitting
 │   │       ├── fix.rs      # Resource path fix (amproj: → am:SHA1.ext)
 │   │       ├── ffi.rs      # UniFFI FFI exports
 │   │       └── ui_parser.rs # uiautomator XML parsing
@@ -71,6 +74,27 @@ automotion fix run my_project.amproj -o ./fixed_output
 ```
 
 The fixed file is saved as `{title}_fixed.amproj` in the output directory.
+
+## Group & Split Tool
+
+For projects with many overlapping elements, the `group-split` command groups all elements into a single embedScene container and then splits the timeline into fixed-frame chunks. This enables time-based batch rendering of complex compositions.
+
+```bash
+# Group all elements and split into 30-frame chunks (default)
+automotion group-split my_project.amproj
+
+# Custom frame count and output directory
+automotion group-split my_project.amproj -f 60 -o ./my_output
+
+# Group, split, and fix resource paths (prevents texture loss)
+automotion group-split my_project.amproj --fix
+```
+
+The `group` command performs only the grouping step (no splitting):
+
+```bash
+automotion group my_project.amproj -o ./output_group
+```
 
 ## Android App
 
@@ -126,6 +150,8 @@ The CLI tool runs on a Linux host and controls the phone remotely via ADB.
 cargo run -p automotion-cli -- render
 cargo run -p automotion-cli -- split <file.amproj>
 cargo run -p automotion-cli -- split-render <file.amproj>
+cargo run -p automotion-cli -- group-split <file.amproj>
+cargo run -p automotion-cli -- group-split <file.amproj> --fix
 ```
 
 ### Prerequisites

@@ -2,6 +2,8 @@
 
 input_projects/
 output_videos/
+output_group_split/
+output_group/
 check.txt
 automotion.sh
 .automotion_split_tmp/

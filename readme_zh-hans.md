@@ -27,6 +27,8 @@
 * **批量渲染** — 自动处理多个 `.amproj` 文件并导出为 MP4 视频
 * **拆分** — 将大型 `.amproj` 项目拆分为独立的元素文件
 * **拆分渲染** — 拆分项目后将每个元素分别渲染为视频
+* **编组切分** — 将所有元素编组为单一 embedScene，再按帧间隔切分，实现基于时间的批量渲染
+* **修复** — 修复资源 URI（`amproj:` → `am:SHA1.ext`），防止跨设备传输时贴图/媒体丢失
 * **动态 UI 交互** — 按 `resource-id` 和 `text` 查找 UI 元素（不硬编码坐标）
 * **渲染状态检测** — 监控输出文件稳定性以检测渲染完成
 * **弹窗处理** — 自动关闭常见弹窗（缺失字体、缺失媒体、广告提示等）
@@ -41,6 +43,7 @@ automotion/
 │   │   └── src/
 │   │       ├── amproj.rs   # .amproj 分析（ZIP/XML 解析）
 │   │       ├── split.rs    # 工程拆分逻辑
+│   │       ├── group_split.rs # 编组 + 时间切分
 │   │       ├── fix.rs      # 资源路径修复（amproj: → am:SHA1.ext）
 │   │       ├── ffi.rs      # UniFFI FFI 导出
 │   │       └── ui_parser.rs # uiautomator XML 解析
@@ -71,6 +74,27 @@ automotion fix run my_project.amproj -o ./fixed_output
 ```
 
 修复后的文件保存为 `{标题}_fixed.amproj`。
+
+## 编组切分工具
+
+对于包含大量重叠元素的工程，`group-split` 命令会将所有元素编组为单一 embedScene 容器，然后按固定帧数将时间线切分为多个片段。这使得复杂合成可以基于时间进行批量渲染。
+
+```bash
+# 编组所有元素并按 30 帧切分（默认）
+automotion group-split my_project.amproj
+
+# 自定义帧数和输出目录
+automotion group-split my_project.amproj -f 60 -o ./my_output
+
+# 编组、切分并修复资源路径（防止贴图丢失）
+automotion group-split my_project.amproj --fix
+```
+
+`group` 命令仅执行编组步骤（不切分）：
+
+```bash
+automotion group my_project.amproj -o ./output_group
+```
 
 ## Android 应用
 
@@ -126,6 +150,8 @@ CLI 工具在 Linux 主机上运行，通过 ADB 远程控制手机。
 cargo run -p automotion-cli -- render
 cargo run -p automotion-cli -- split <file.amproj>
 cargo run -p automotion-cli -- split-render <file.amproj>
+cargo run -p automotion-cli -- group-split <file.amproj>
+cargo run -p automotion-cli -- group-split <file.amproj> --fix
 ```
 
 ### 前置要求
