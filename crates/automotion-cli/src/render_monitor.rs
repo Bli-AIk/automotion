@@ -15,7 +15,9 @@ pub fn wait_for_render_complete(proj_title: &str) -> Result<String, String> {
     let mut elapsed: u64 = 0;
 
     // 阶段 1: 等待匹配的视频文件出现
-    logger::info(&format!("等待视频文件生成（匹配标题: \"{proj_title}\"）..."));
+    logger::info(&format!(
+        "等待视频文件生成（匹配标题: \"{proj_title}\"）..."
+    ));
     let video_file = loop {
         if elapsed >= config::MAX_RENDER_WAIT_SECS {
             return Err(format!(

@@ -30,16 +30,11 @@ pub struct FixResult {
 ///
 /// - `input`: amproj 文件路径
 /// - `output_dir`: 输出目录
-pub fn fix_amproj(
-    input: &Path,
-    output_dir: &Path,
-) -> Result<FixResult, String> {
+pub fn fix_amproj(input: &Path, output_dir: &Path) -> Result<FixResult, String> {
     logger::step(&format!("开始修补: {}", input.display()));
 
-    let file =
-        std::fs::File::open(input).map_err(|e| format!("无法打开文件: {e}"))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("无法解析 ZIP: {e}"))?;
+    let file = std::fs::File::open(input).map_err(|e| format!("无法打开文件: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("无法解析 ZIP: {e}"))?;
 
     // 读取 ZIP 中所有文件
     let mut archive_files: Vec<(String, Vec<u8>)> = Vec::new();
@@ -71,8 +66,7 @@ pub fn fix_amproj(
     let proj_name = extract_project_name(&xml_content, input);
 
     // 创建输出目录
-    std::fs::create_dir_all(output_dir)
-        .map_err(|e| format!("创建输出目录失败: {e}"))?;
+    std::fs::create_dir_all(output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
 
     // 从 manifest.txt 构建 filename → SHA1 映射
     let manifest = archive_files
@@ -124,8 +118,7 @@ fn write_fixed_amproj(
     new_xml: &str,
     archive_files: &[(String, Vec<u8>)],
 ) -> Result<(), String> {
-    let out_file =
-        std::fs::File::create(out_path).map_err(|e| format!("创建输出文件失败: {e}"))?;
+    let out_file = std::fs::File::create(out_path).map_err(|e| format!("创建输出文件失败: {e}"))?;
     let mut zip_writer = zip::ZipWriter::new(out_file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -196,10 +189,7 @@ fn parse_manifest(manifest: &str) -> std::collections::HashMap<String, String> {
 }
 
 /// 将 XML 中所有 `amproj:filename` 替换为 `am:SHA1.ext`
-fn rewrite_to_am_direct(
-    xml: &str,
-    sig_map: &std::collections::HashMap<String, String>,
-) -> String {
+fn rewrite_to_am_direct(xml: &str, sig_map: &std::collections::HashMap<String, String>) -> String {
     let re = Regex::new(r#"amproj:([^"]+)"#).unwrap();
     re.replace_all(xml, |caps: &regex::Captures| {
         let filename = &caps[1];

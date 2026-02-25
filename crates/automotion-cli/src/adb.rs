@@ -120,3 +120,27 @@ pub fn dump_ui_xml() -> Result<String, String> {
 pub fn tap(x: i32, y: i32) -> Result<String, String> {
     shell_cmd(&format!("input tap {x} {y}"))
 }
+
+/// 在 /sdcard/Download 中查找匹配标题的最新 amproj 文件
+pub fn find_latest_amproj_in_download(title: &str) -> Result<String, String> {
+    let output = shell_cmd(&format!(
+        "ls -t '{}'/*.amproj 2>/dev/null",
+        config::PHONE_DOWNLOAD_DIR
+    ))?;
+    for line in output.lines() {
+        let f = line.trim();
+        if !f.is_empty() && !f.contains("No such file") && f.contains(title) {
+            return Ok(f.to_string());
+        }
+    }
+    Err(format!(
+        "在 {} 中未找到匹配 \"{}\" 的 amproj 文件",
+        config::PHONE_DOWNLOAD_DIR,
+        title
+    ))
+}
+
+/// 按下返回键
+pub fn press_back() -> Result<String, String> {
+    shell_cmd("input keyevent KEYCODE_BACK")
+}

@@ -4,8 +4,8 @@ mod ui;
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand};
 
@@ -31,6 +31,9 @@ enum Commands {
         /// 渲染前先修复资源路径
         #[arg(long)]
         fix: bool,
+        /// 同时导出项目包（amproj）
+        #[arg(long)]
+        amproj: bool,
     },
     /// 拆分大型 amproj 为独立元素
     Split {
@@ -50,6 +53,9 @@ enum Commands {
         /// 渲染前先修复资源路径
         #[arg(long)]
         fix: bool,
+        /// 同时导出项目包（amproj）
+        #[arg(long)]
+        amproj: bool,
     },
     /// 编组后按帧切分 amproj
     GroupSplit {
@@ -98,21 +104,32 @@ fn main() {
     match cli.command {
         None | Some(Commands::Render { .. }) => {
             // 默认模式 / render 子命令
-            let (input, output, do_fix) = match cli.command {
-                Some(Commands::Render { input, output, fix }) => (input, output, fix),
+            let (input, output, do_fix, do_amproj) = match cli.command {
+                Some(Commands::Render {
+                    input,
+                    output,
+                    fix,
+                    amproj,
+                }) => (input, output, fix, amproj),
                 _ => (
                     "./input_projects".to_string(),
                     "./output_videos".to_string(),
                     false,
+                    false,
                 ),
             };
-            run_render(&input, &output, do_fix);
+            run_render(&input, &output, do_fix, do_amproj);
         }
         Some(Commands::Split { file, output }) => {
             run_split(&file, &output);
         }
-        Some(Commands::SplitRender { file, output, fix }) => {
-            run_split_render(&file, &output, fix);
+        Some(Commands::SplitRender {
+            file,
+            output,
+            fix,
+            amproj,
+        }) => {
+            run_split_render(&file, &output, fix, amproj);
         }
         Some(Commands::GroupSplit {
             file,
@@ -136,7 +153,7 @@ fn main() {
 // =============================================================================
 
 /// render: 批量渲染 input 目录中的 amproj 文件
-fn run_render(input_dir: &str, output_dir: &str, do_fix: bool) {
+fn run_render(input_dir: &str, output_dir: &str, do_fix: bool, do_amproj: bool) {
     println!("============================================");
     println!("  automotion — Alemon 批量渲染自动化");
     println!("============================================");
@@ -166,9 +183,9 @@ fn run_render(input_dir: &str, output_dir: &str, do_fix: bool) {
     }
 
     if do_fix {
-        batch_render_with_copy(&projects, output_dir, &running);
+        batch_render_with_copy(&projects, output_dir, &running, do_amproj);
     } else {
-        batch_render(&projects, output_dir, &running);
+        batch_render(&projects, output_dir, &running, do_amproj);
     }
 
     if let Some(dir) = fix_dir {
@@ -203,7 +220,7 @@ fn run_split(file: &str, output_dir: &str) {
 }
 
 /// split-render: 先拆分再批量渲染
-fn run_split_render(file: &str, output_dir: &str, do_fix: bool) {
+fn run_split_render(file: &str, output_dir: &str, do_fix: bool, do_amproj: bool) {
     println!("============================================");
     println!("  automotion — 拆分 + 批量渲染");
     println!("============================================");
@@ -268,9 +285,9 @@ fn run_split_render(file: &str, output_dir: &str, do_fix: bool) {
     }
 
     if do_fix {
-        batch_render_with_copy(&split_outputs, output_dir, &running);
+        batch_render_with_copy(&split_outputs, output_dir, &running, do_amproj);
     } else {
-        batch_render(&split_outputs, output_dir, &running);
+        batch_render(&split_outputs, output_dir, &running, do_amproj);
     }
 
     // 清理临时目录
@@ -328,9 +345,7 @@ fn run_group_split(file: &str, output_dir: &str, frames: u32, do_fix: bool) {
                         Ok(result) => {
                             // 将 fix 输出重命名为原始文件名
                             let final_path = fix_output_dir.join(&original_name);
-                            if let Err(e) =
-                                std::fs::rename(&result.output_amproj, &final_path)
-                            {
+                            if let Err(e) = std::fs::rename(&result.output_amproj, &final_path) {
                                 logger::error(&format!(
                                     "重命名失败: {} → {} — {}",
                                     result.output_amproj.display(),
@@ -343,11 +358,7 @@ fn run_group_split(file: &str, output_dir: &str, frames: u32, do_fix: bool) {
                             }
                         }
                         Err(e) => {
-                            logger::error(&format!(
-                                "fix 失败: {} — {}",
-                                out_file.display(),
-                                e
-                            ));
+                            logger::error(&format!("fix 失败: {} — {}", out_file.display(), e));
                             fix_err += 1;
                         }
                     }
@@ -453,10 +464,7 @@ fn run_fix(action: FixAction) {
             for input_path in &files {
                 match fix::fix_amproj(input_path, &output_path) {
                     Ok(result) => {
-                        logger::step(&format!(
-                            "修复完成: {}",
-                            result.output_amproj.display()
-                        ));
+                        logger::step(&format!("修复完成: {}", result.output_amproj.display()));
                     }
                     Err(e) => {
                         logger::error(&format!("修补失败: {e}"));
@@ -516,7 +524,12 @@ fn collect_amproj_files(dir: &str) -> Vec<PathBuf> {
     projects
 }
 
-fn batch_render(projects: &[PathBuf], output_dir: &str, running: &Arc<AtomicBool>) {
+fn batch_render(
+    projects: &[PathBuf],
+    output_dir: &str,
+    running: &Arc<AtomicBool>,
+    do_amproj: bool,
+) {
     let total = projects.len();
     logger::info(&format!("共发现 {total} 个工程文件待处理"));
     println!();
@@ -532,7 +545,7 @@ fn batch_render(projects: &[PathBuf], output_dir: &str, running: &Arc<AtomicBool
         let idx = i + 1;
         logger::info(&format!("========== 进度: [{idx}/{total}] =========="));
 
-        match process_single_project(proj_path, output_dir) {
+        match process_single_project(proj_path, output_dir, do_amproj) {
             Ok(()) => success += 1,
             Err(e) => {
                 failed += 1;
@@ -551,7 +564,12 @@ fn batch_render(projects: &[PathBuf], output_dir: &str, running: &Arc<AtomicBool
 }
 
 /// 渲染后同时将 amproj 复制到输出目录，文件名统一使用内部标题
-fn batch_render_with_copy(projects: &[PathBuf], output_dir: &str, running: &Arc<AtomicBool>) {
+fn batch_render_with_copy(
+    projects: &[PathBuf],
+    output_dir: &str,
+    running: &Arc<AtomicBool>,
+    do_amproj: bool,
+) {
     let total = projects.len();
     logger::info(&format!("共发现 {total} 个工程文件待处理"));
     println!();
@@ -577,19 +595,26 @@ fn batch_render_with_copy(projects: &[PathBuf], output_dir: &str, running: &Arc<
             }
         };
 
-        match process_single_project(proj_path, output_dir) {
+        match process_single_project(proj_path, output_dir, do_amproj) {
             Ok(()) => {
-                // 渲染成功后：重命名 mp4 + 复制 amproj，统一使用内部标题
+                // 渲染成功后：重命名 mp4（和 amproj），统一使用内部标题
                 let proj_name = proj_path.file_stem().unwrap().to_string_lossy();
                 let old_mp4 = format!("{}/{}.mp4", output_dir, proj_name);
                 let new_mp4 = format!("{}/{}.mp4", output_dir, title);
-                let new_amproj = format!("{}/{}.amproj", output_dir, title);
 
                 if old_mp4 != new_mp4 && PathBuf::from(&old_mp4).exists() {
                     let _ = fs::rename(&old_mp4, &new_mp4);
                 }
-                let _ = fs::copy(proj_path, &new_amproj);
-                logger::info(&format!("输出: {title}.mp4 + {title}.amproj"));
+                if do_amproj {
+                    let old_amproj = format!("{}/{}.amproj", output_dir, proj_name);
+                    let new_amproj = format!("{}/{}.amproj", output_dir, title);
+                    if old_amproj != new_amproj && PathBuf::from(&old_amproj).exists() {
+                        let _ = fs::rename(&old_amproj, &new_amproj);
+                    }
+                    logger::info(&format!("输出: {title}.mp4 + {title}.amproj"));
+                } else {
+                    logger::info(&format!("输出: {title}.mp4"));
+                }
                 success += 1;
             }
             Err(e) => {
@@ -608,17 +633,13 @@ fn batch_render_with_copy(projects: &[PathBuf], output_dir: &str, running: &Arc<
     logger::step("==========================================");
 }
 
-fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Result<(), String> {
-    let proj_filename = proj_path
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
-    let proj_name = proj_path
-        .file_stem()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
+fn process_single_project(
+    proj_path: &std::path::Path,
+    output_dir: &str,
+    do_amproj: bool,
+) -> Result<(), String> {
+    let proj_filename = proj_path.file_name().unwrap().to_string_lossy().to_string();
+    let proj_name = proj_path.file_stem().unwrap().to_string_lossy().to_string();
 
     let delay = || std::thread::sleep(std::time::Duration::from_millis(config::UI_STEP_DELAY_MS));
     let timeout = config::UI_WAIT_TIMEOUT_SECS;
@@ -634,21 +655,21 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
     ));
 
     // 阶段 1: 推送文件到手机
-    logger::step("[1/9] 推送工程文件");
+    logger::step("[1/10] 推送工程文件");
     adb::push_file(
         proj_path.to_str().unwrap(),
         &format!("{}/{}", config::PHONE_DOWNLOAD_DIR, proj_filename),
     )?;
 
     // 阶段 2: 查询 MediaStore ID 并通过 content:// URI 触发导入
-    logger::step("[2/9] 通过 content:// URI 触发导入");
+    logger::step("[2/10] 通过 content:// URI 触发导入");
     std::thread::sleep(std::time::Duration::from_secs(2)); // MediaStore 索引需要时间
     let media_id = adb::query_media_id(&proj_filename)?;
     adb::open_project_via_content(&media_id)?;
     delay();
 
     // 阶段 3: 在导入确认对话框中点击"导入"（带重试）
-    logger::step("[3/9] 确认导入对话框");
+    logger::step("[3/10] 确认导入对话框");
     if !ui::wait_and_tap_text("导入", timeout) {
         // 首次失败，可能 Alemon 冷启动慢，重新发送 intent
         logger::warn("导入对话框未出现，重试中...");
@@ -665,7 +686,7 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
     delay();
 
     // 阶段 4: 在导入完成对话框中点击"完成"
-    logger::step("[4/9] 等待导入完成");
+    logger::step("[4/10] 等待导入完成");
     if !ui::wait_and_tap_text("完成", timeout) {
         logger::warn("未找到完成按钮，尝试关闭弹窗...");
         ui::dismiss_popups();
@@ -673,7 +694,7 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
     delay();
 
     // 阶段 5: 启动 Alemon 并根据类型导航到对应标签页
-    logger::step("[5/9] 打开 Alemon 并导航到对应标签页");
+    logger::step("[5/10] 打开 Alemon 并导航到对应标签页");
     adb::launch_app()?;
     delay();
 
@@ -693,7 +714,7 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
     delay();
 
     // 阶段 6: 在列表中找到刚导入的工程并打开
-    logger::step("[6/9] 打开导入的工程");
+    logger::step("[6/10] 打开导入的工程");
     if !ui::wait_and_tap_text(&proj_title, timeout) {
         adb::force_stop();
         adb::cleanup_phone(&proj_filename, None);
@@ -704,12 +725,11 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
     // 编辑器加载后可能连续出现多个弹窗（"原件丢失"、"缺失字体"等）
     // 同时等待 share 按钮出现，在等待过程中持续处理弹窗
     // 阶段 7: 点击导出菜单并开始渲染
-    logger::step("[7/9] 打开导出菜单并开始渲染");
+    logger::step("[7/10] 打开导出菜单并开始渲染");
 
     {
         let share_timeout = 30u64; // 大项目编辑器加载+弹窗处理可能需要较长时间
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_secs(share_timeout);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(share_timeout);
         let mut found_share = false;
 
         while std::time::Instant::now() < deadline {
@@ -725,7 +745,9 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
                     break;
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(config::UI_POLL_INTERVAL_MS));
+            std::thread::sleep(std::time::Duration::from_millis(
+                config::UI_POLL_INTERVAL_MS,
+            ));
         }
 
         if !found_share {
@@ -755,11 +777,10 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
     //   - 简单项目：瞬间渲染完成，直接进入预览页（含 saveButton）
     //   - 复杂项目：编辑器上覆盖渲染进度层，渲染完成后才进入预览页
     //   - 可能弹出"无法导出"警告，需点"仍要导出"继续
-    logger::step("[8/9] 等待渲染完成");
+    logger::step("[8/10] 等待渲染完成");
 
     let render_timeout = config::MAX_RENDER_WAIT_SECS;
-    let deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs(render_timeout);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(render_timeout);
     let mut last_log = std::time::Instant::now();
     let mut found_save = false;
 
@@ -791,7 +812,9 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
             }
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(config::UI_POLL_INTERVAL_MS));
+        std::thread::sleep(std::time::Duration::from_millis(
+            config::UI_POLL_INTERVAL_MS,
+        ));
     }
 
     if !found_save {
@@ -808,19 +831,43 @@ fn process_single_project(proj_path: &std::path::Path, output_dir: &str) -> Resu
     }
 
     // 等待文件写入完成
-    logger::step("[8/9] 等待文件保存完成");
+    logger::step("[8/10] 等待文件保存完成");
     let video_remote_path = render_monitor::wait_for_render_complete(&proj_title)?;
 
-    // 阶段 9: 拉取视频与清理
-    logger::step("[9/9] 拉取视频并清理");
+    // 阶段 9: 导出项目包（amproj）— 仅在 --amproj 模式下执行
+    let amproj_remote_path = if do_amproj {
+        logger::step("[9/10] 导出项目包");
+        Some(export_project_package(
+            &proj_title,
+            &proj_filename,
+            timeout,
+        )?)
+    } else {
+        logger::info("[9/10] 跳过项目包导出（未指定 --amproj）");
+        None
+    };
+
+    // 阶段 10: 拉取视频（和项目包），然后清理
+    logger::step("[10/10] 拉取文件并清理");
     let video_local_name = format!("{proj_name}.mp4");
     adb::pull_file(
         &video_remote_path,
         &format!("{}/{}", output_dir, video_local_name),
     )?;
 
+    if let Some(ref amproj_path) = amproj_remote_path {
+        let amproj_local_name = format!("{proj_name}.amproj");
+        adb::pull_file(
+            amproj_path,
+            &format!("{}/{}", output_dir, amproj_local_name),
+        )?;
+    }
+
     adb::force_stop();
     adb::cleanup_phone(&proj_filename, Some(&video_remote_path));
+    if let Some(ref amproj_path) = amproj_remote_path {
+        let _ = adb::shell_cmd(&format!("rm -f '{amproj_path}'"));
+    }
 
     logger::step(&format!("工程 [{proj_filename}] 处理完成 ✓"));
     println!();
@@ -831,4 +878,114 @@ fn restore_and_exit(code: i32) -> ! {
     let _ = adb::shell_cmd("svc power stayon false");
     logger::info("屏幕常亮已恢复为默认策略");
     std::process::exit(code);
+}
+
+/// 导出项目包：从编辑器的导出菜单导出 amproj 项目包
+/// 返回手机端保存的 amproj 文件路径
+fn export_project_package(
+    proj_title: &str,
+    _proj_filename: &str,
+    timeout: u64,
+) -> Result<String, String> {
+    let delay = || std::thread::sleep(std::time::Duration::from_millis(config::UI_STEP_DELAY_MS));
+
+    // 从视频预览页返回编辑器：点击"关闭"(doneButton)
+    logger::info("从视频预览页返回编辑器...");
+    if !ui::wait_and_tap_by_resource_id("doneButton", 5) {
+        // 备选：按 back 键
+        adb::press_back()?;
+        delay();
+    }
+    delay();
+
+    // 等待编辑器页面加载（share 按钮出现）
+    let share_timeout = 15u64;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(share_timeout);
+    let mut found_share = false;
+
+    while std::time::Instant::now() < deadline {
+        ui::dismiss_popups();
+        if let Ok(xml) = adb::dump_ui_xml() {
+            if let Some((cx, cy)) = ui::find_element_by_id(&xml, "share") {
+                logger::info(&format!("找到 share 按钮: ({cx}, {cy})，打开导出菜单"));
+                let _ = adb::tap(cx, cy);
+                found_share = true;
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            config::UI_POLL_INTERVAL_MS,
+        ));
+    }
+
+    if !found_share {
+        return Err("返回编辑器后未找到 share 按钮".into());
+    }
+    delay();
+
+    // 等待导出菜单加载
+    if !ui::wait_for_text_visible("项目包", timeout) {
+        return Err("导出菜单中未找到「项目包」选项".into());
+    }
+
+    // 点击"项目包"标签
+    if !ui::wait_and_tap_text("项目包", timeout) {
+        return Err("无法点击「项目包」标签".into());
+    }
+    delay();
+
+    // 点击 exportButton 导出项目包
+    if !ui::wait_and_tap_by_resource_id("exportButton", timeout) {
+        return Err("无法点击导出按钮".into());
+    }
+
+    // 等待打包完成（打包对话框 "打包项目" 出现并消失）
+    logger::info("等待项目打包完成...");
+    {
+        let pack_deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+        // 先等打包对话框出现或分享面板直接出现
+        loop {
+            if let Ok(xml) = adb::dump_ui_xml() {
+                // 打包完成后分享面板直接出现
+                if xml.contains("com.huawei.android.internal.app") || xml.contains("另存为") {
+                    logger::info("分享面板已出现");
+                    break;
+                }
+            }
+            if std::time::Instant::now() >= pack_deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(
+                config::UI_POLL_INTERVAL_MS,
+            ));
+        }
+    }
+    delay();
+
+    // Android 分享面板出现 → 点击"另存为"
+    if !ui::tap_save_as_in_share_sheet(timeout) {
+        // 分享面板可能未出现或按钮不同，尝试关闭并重试
+        adb::press_back()?;
+        return Err("分享面板中未找到「另存为」按钮".into());
+    }
+    delay();
+
+    // SAF 文件选择器 → 导航到 Download 并保存
+    if !ui::save_in_saf_to_download(15) {
+        adb::press_back()?;
+        return Err("SAF 文件选择器中未能保存到 Download".into());
+    }
+
+    // 等待文件出现
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // 查找保存的 amproj 文件
+    let amproj_path = adb::find_latest_amproj_in_download(proj_title)?;
+    logger::info(&format!("项目包已保存: {amproj_path}"));
+
+    // 关闭可能残留的文件管理器界面
+    let _ = adb::press_back();
+    delay();
+
+    Ok(amproj_path)
 }

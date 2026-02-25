@@ -45,8 +45,7 @@ pub fn group_and_split(
 
     let (xml_content, archive_files) = read_amproj_zip(input)?;
 
-    let doc = roxmltree::Document::parse(&xml_content)
-        .map_err(|e| format!("XML 解析失败: {e}"))?;
+    let doc = roxmltree::Document::parse(&xml_content).map_err(|e| format!("XML 解析失败: {e}"))?;
     let root = doc.root_element();
 
     if root.tag_name().name() != "scene" {
@@ -79,15 +78,13 @@ pub fn group_and_split(
     // 阶段 2: 按帧切分
     let chunk_duration = (frames_per_chunk + 1) as u64 * 1000 / fps as u64 - 1;
     let total_frames = (total_time as f64 * fps as f64 / 1000.0).ceil() as u64;
-    let chunk_count =
-        (total_frames + frames_per_chunk as u64 - 1) / frames_per_chunk as u64;
+    let chunk_count = (total_frames + frames_per_chunk as u64 - 1) / frames_per_chunk as u64;
 
     logger::info(&format!(
         "切分参数: 每段{frames_per_chunk}帧, 段时长={chunk_duration}ms, 总帧数≈{total_frames}, 段数={chunk_count}"
     ));
 
-    std::fs::create_dir_all(output_dir)
-        .map_err(|e| format!("创建输出目录失败: {e}"))?;
+    std::fs::create_dir_all(output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
 
     let mut outputs = Vec::new();
 
@@ -101,8 +98,14 @@ pub fn group_and_split(
         let out_time: i64 =
             i32::MAX as i64 - total_time as i64 + actual_duration as i64 + in_time as i64;
 
-        let split_xml =
-            build_split_xml(&grouped_xml, actual_duration, in_time, out_time, chunk_idx, frames_per_chunk);
+        let split_xml = build_split_xml(
+            &grouped_xml,
+            actual_duration,
+            in_time,
+            out_time,
+            chunk_idx,
+            frames_per_chunk,
+        );
 
         let start_frame = chunk_idx * frames_per_chunk as u64;
         let end_frame = ((chunk_idx + 1) * frames_per_chunk as u64).min(total_frames);
@@ -132,8 +135,7 @@ pub fn group_amproj(input: &Path, output_dir: &Path) -> Result<PathBuf, String> 
 
     let (xml_content, archive_files) = read_amproj_zip(input)?;
 
-    let doc = roxmltree::Document::parse(&xml_content)
-        .map_err(|e| format!("XML 解析失败: {e}"))?;
+    let doc = roxmltree::Document::parse(&xml_content).map_err(|e| format!("XML 解析失败: {e}"))?;
     let root = doc.root_element();
 
     if root.tag_name().name() != "scene" {
@@ -151,8 +153,7 @@ pub fn group_amproj(input: &Path, output_dir: &Path) -> Result<PathBuf, String> 
 
     let grouped_xml = build_grouped_xml(&xml_content, &root, total_time)?;
 
-    std::fs::create_dir_all(output_dir)
-        .map_err(|e| format!("创建输出目录失败: {e}"))?;
+    std::fs::create_dir_all(output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
 
     let title = root.attribute("title").unwrap_or("未知");
     let safe_title = sanitize_filename(title);
@@ -171,10 +172,8 @@ pub fn group_amproj(input: &Path, output_dir: &Path) -> Result<PathBuf, String> 
 
 /// 读取 amproj ZIP，返回 (XML 内容, 所有文件列表)
 fn read_amproj_zip(input: &Path) -> Result<(String, Vec<(String, Vec<u8>)>), String> {
-    let file =
-        std::fs::File::open(input).map_err(|e| format!("无法打开文件: {e}"))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("无法解析 ZIP: {e}"))?;
+    let file = std::fs::File::open(input).map_err(|e| format!("无法打开文件: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("无法解析 ZIP: {e}"))?;
 
     let mut archive_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut xml_content = String::new();
@@ -422,8 +421,7 @@ fn write_amproj_zip(
     xml_content: &str,
     archive_files: &[(String, Vec<u8>)],
 ) -> Result<(), String> {
-    let out_file =
-        std::fs::File::create(out_path).map_err(|e| format!("创建输出文件失败: {e}"))?;
+    let out_file = std::fs::File::create(out_path).map_err(|e| format!("创建输出文件失败: {e}"))?;
     let mut zip_writer = zip::ZipWriter::new(out_file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);

@@ -31,10 +31,8 @@ use crate::logger;
 pub fn split_amproj(input: &Path, output_dir: &Path) -> Result<Vec<PathBuf>, String> {
     logger::step(&format!("开始拆分: {}", input.display()));
 
-    let file =
-        std::fs::File::open(input).map_err(|e| format!("无法打开文件: {e}"))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("无法解析 ZIP: {e}"))?;
+    let file = std::fs::File::open(input).map_err(|e| format!("无法打开文件: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("无法解析 ZIP: {e}"))?;
 
     // 读取 ZIP 中所有文件
     let mut archive_files: Vec<(String, Vec<u8>)> = Vec::new();
@@ -61,8 +59,7 @@ pub fn split_amproj(input: &Path, output_dir: &Path) -> Result<Vec<PathBuf>, Str
     }
 
     // 解析 XML
-    let doc = roxmltree::Document::parse(&xml_content)
-        .map_err(|e| format!("XML 解析失败: {e}"))?;
+    let doc = roxmltree::Document::parse(&xml_content).map_err(|e| format!("XML 解析失败: {e}"))?;
     let root = doc.root_element();
 
     if root.tag_name().name() != "scene" {
@@ -107,10 +104,7 @@ pub fn split_amproj(input: &Path, output_dir: &Path) -> Result<Vec<PathBuf>, Str
         .map(|m| {
             let sig = m.attribute("sig").unwrap_or("").to_string();
             let uri = m.attribute("uri").unwrap_or("").to_string();
-            let asset_filename = uri
-                .strip_prefix("amproj:")
-                .unwrap_or("")
-                .to_string();
+            let asset_filename = uri.strip_prefix("amproj:").unwrap_or("").to_string();
             MediaInfo {
                 sig,
                 asset_filename,
@@ -120,8 +114,7 @@ pub fn split_amproj(input: &Path, output_dir: &Path) -> Result<Vec<PathBuf>, Str
         .collect();
 
     // 创建输出目录
-    std::fs::create_dir_all(output_dir)
-        .map_err(|e| format!("创建输出目录失败: {e}"))?;
+    std::fs::create_dir_all(output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
 
     let mut outputs = Vec::new();
 
@@ -152,10 +145,8 @@ pub fn split_amproj(input: &Path, output_dir: &Path) -> Result<Vec<PathBuf>, Str
         let end_time = child.attribute("endTime");
 
         // 构建新的 scene XML
-        let root_attrs: Vec<(&str, &str)> = root
-            .attributes()
-            .map(|a| (a.name(), a.value()))
-            .collect();
+        let root_attrs: Vec<(&str, &str)> =
+            root.attributes().map(|a| (a.name(), a.value())).collect();
         let new_xml = build_scene_xml(&root_attrs, label, end_time, &media_xmls, child_xml);
 
         // 收集需要的资源文件名
@@ -171,7 +162,14 @@ pub fn split_amproj(input: &Path, output_dir: &Path) -> Result<Vec<PathBuf>, Str
         let out_path = output_dir.join(&out_name);
 
         // 创建 ZIP
-        write_split_amproj(&out_path, i, &safe_label, &new_xml, &archive_files, &needed_assets)?;
+        write_split_amproj(
+            &out_path,
+            i,
+            &safe_label,
+            &new_xml,
+            &archive_files,
+            &needed_assets,
+        )?;
 
         logger::info(&format!(
             "  [{i}] {out_name}  ({tag}, label={label:?}, 资源: {}个)",
@@ -266,8 +264,7 @@ fn write_split_amproj(
     archive_files: &[(String, Vec<u8>)],
     needed_assets: &HashSet<&str>,
 ) -> Result<(), String> {
-    let out_file =
-        std::fs::File::create(out_path).map_err(|e| format!("创建输出文件失败: {e}"))?;
+    let out_file = std::fs::File::create(out_path).map_err(|e| format!("创建输出文件失败: {e}"))?;
     let mut zip_writer = zip::ZipWriter::new(out_file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
